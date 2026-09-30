@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paperless-notes"
+dynamic = ["version"]
+description = "Paperless Notes: a local Markdown note editor for Windows that is safe to sync with OneDrive."
+requires-python = ">=3.13,<3.14"
+dependencies = ["PySide6-Essentials==6.10.0"]
+
+[project.gui-scripts]
+paperless-notes = "paperless_notes.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "paperless_notes.branding.VERSION" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py313"
+src = ["src", "tests", "tools"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "BLE", "S", "UP", "SIM", "RUF", "ERA", "N", "PIE", "T20", "PT"]
+ignore = ["RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S311", "S603", "RUF001", "RUF003", "PT011", "PT017", "PT018"]
+"tools/**" = ["T20", "S603"]
+"tests/corpus.py" = ["E501"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+mypy_path = "src"
+packages = ["paperless_notes"]
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
+addopts = "-q -p no:cacheprovider"
+markers = [
+    "slow: long-running randomised tests",
+    "perf: performance and memory budgets",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["paperless_notes"]
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]

@@ -1,0 +1,6 @@
+# Runtime dependencies for Windows x64 and CPython 3.13.
+# Install with: python -m pip install --require-hashes -r requirements.txt
+PySide6-Essentials==6.10.0 \
+    --hash=sha256:fc167eb211dd1580e20ba90d299e74898e7a5a1306d832421e879641fc03b6fe
+shiboken6==6.10.0 \
+    --hash=sha256:0bc5631c1bf150cbef768a17f5f289aae1cb4db6c6b0c19b2421394e27783717

@@ -1,0 +1,59 @@
+Paperless Notes Source-Available License, version 1.0
+
+Copyright (c) 2026 @peeksxx. All rights not expressly granted below are reserved.
+
+Paperless Notes by @peeksxx (Discord, Telegram) - peeksxx.dev
+
+This license covers the Paperless Notes source code, its documentation and the release binaries built
+from it by the copyright holder (together, "the Software"). Paperless Notes is source available. It is
+not open source, and this license is not an open source license.
+
+Third-party components shipped with the Software, including Qt for Python (PySide6 and shiboken6), the
+Qt libraries and the Python runtime, are licensed under their own terms, listed in
+THIRD_PARTY_NOTICES.md and the licenses folder. Nothing in this license limits the rights those licenses
+give you. In particular, you may replace the bundled Qt and Qt for Python libraries with other or
+modified versions, and reverse engineer the Software as far as needed to debug such replacements, as
+the GNU Lesser General Public License allows.
+
+1. What you may do
+
+Free of charge, you may:
+
+  a. view and read the source code;
+  b. build the unmodified source code for your own use;
+  c. install, run and use the unmodified release binaries, at home or at work;
+  d. give others exact, unmodified copies of the release binaries or of the unmodified source code,
+     as long as this LICENSE file, THIRD_PARTY_NOTICES.md, the licenses folder and the credit line
+     above stay included and unchanged, and you charge nothing for the Software itself.
+
+2. What you may not do
+
+Unless the copyright holder has given you written permission, you may not:
+
+  a. modify the Software, or distribute modified copies of it;
+  b. make or distribute derivative works or altered forks of the Software;
+  c. rebrand the Software, or remove, hide or change its credit, copyright or license notices;
+  d. sell, rent, lease or sublicense the Software, or charge for access to it;
+  e. present the Software as your own work.
+
+A copy that a code hosting service makes because its terms of service require it does not give anyone
+the right to modify the Software or to distribute altered versions.
+
+3. Contributions
+
+Contributions (patches, pull requests, translations or other changes) are accepted only with the
+copyright holder's prior written permission and on terms agreed in writing.
+
+4. Termination
+
+If you use the Software outside these terms, your rights under this license end automatically.
+
+5. No warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO
+EVENT SHALL THE AUTHOR OR COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING LOSS OF DATA, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OF OR OTHER DEALINGS IN THE SOFTWARE. KEEP YOUR OWN BACKUPS.
+
+Contact: Discord or Telegram @peeksxx, https://peeksxx.dev
