@@ -1,4 +1,4 @@
-"""Markdown rendered for export and rich copy: one renderer, one safety policy (ADR-0009).
+"""Markdown rendered for export and rich copy: one renderer, one safety policy.
 
 The note is read with the same lexer the editor uses and turned into a small block model (headings,
 paragraphs, lists, task lists, quotes, fenced code, tables, rules). ``render_html`` writes inert HTML

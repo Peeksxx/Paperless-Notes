@@ -1,6 +1,6 @@
 # Third-party notices
 
-Paperless Notes 4.1.0 for Windows ships the components below. Each keeps its own license; the
+Paperless Notes 4.2.0 for Windows ships the components below. Each keeps its own license; the
 Paperless Notes license (`LICENSE`) does not change or limit these terms. The full license texts are in
 the `licenses` folder next to `Paperless Notes.exe` and in the source repository.
 

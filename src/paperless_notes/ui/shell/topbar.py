@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor, QEnterEvent, QFontMetrics, QPainter, QPaintEve
 from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QLabel, QMenu, QSizePolicy, QToolButton, QWidget
 
 from paperless_notes.core import pathid
+from paperless_notes.ui.shell.labels import note_title
 from paperless_notes.ui.shell.widgets import keycaps_width, meta_font, paint_keycaps
 from paperless_notes.ui.theme.icons import draw_glyph
 from paperless_notes.ui.theme.tokens import Theme
@@ -21,7 +22,8 @@ SEARCH_TIP = (
 
 
 def crumbs_for(path: str, roots: list[str]) -> list[tuple[str, str]]:
-    """(label, path) from the library root that holds ``path`` (or the drive) down to the note."""
+    """(label, path) from the library root that holds ``path`` (or the drive) down to the note, which is
+    labelled like the library labels it."""
     normalized = pathid.normalize(path)
     root = next(
         (r for r in roots if pathid.is_within(normalized, r) or pathid.same_path(normalized, r)), None
@@ -40,6 +42,8 @@ def crumbs_for(path: str, roots: list[str]) -> list[tuple[str, str]]:
         if parent == current:
             break
         current = parent
+    if parts and parts[0][1] == normalized:
+        parts[0] = (note_title(parts[0][0]), normalized)
     return list(reversed(parts))
 
 

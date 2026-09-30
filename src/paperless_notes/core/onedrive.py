@@ -1,6 +1,6 @@
 """OneDrive awareness: sync roots, cloud placeholders and conflict-copy heuristics.
 
-Assumptions (see ADR-0002): OneDrive exposes its roots through ``OneDrive*`` environment variables,
+Assumptions: OneDrive exposes its roots through ``OneDrive*`` environment variables,
 cloud-only files carry the RECALL_ON_* / OFFLINE attributes and a cloud reparse tag, the client
 replaces files by renaming a downloaded copy over them, and a copy that lost a conflict is renamed to
 ``<stem>-<COMPUTERNAME>.<ext>`` (optionally with a ``-<n>`` suffix).

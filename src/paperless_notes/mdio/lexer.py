@@ -1,7 +1,7 @@
 """Line-by-line Markdown classification for syntax highlighting.
 
 It only decides how characters look; it never changes text, so an imperfect guess costs styling,
-never data. Every scan is linear in the line length and bounded (SEC8): long lines get block-level
+never data. Every scan is linear in the line length and bounded: long lines get block-level
 styling only, and bracket and emphasis stacks have fixed depth limits.
 """
 

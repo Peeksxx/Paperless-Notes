@@ -12,11 +12,11 @@ See [LICENSE](LICENSE) for the terms.
 
 ## Download
 
-Paperless Notes 4.1.0 supports 64-bit Windows 10 and Windows 11.
+Paperless Notes 4.2.0 supports 64-bit Windows 10 and Windows 11.
 
-- [Download the Windows installer](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.1.0/Paperless-Notes-4.1.0-setup.exe)
-- [Download the portable ZIP](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.1.0/Paperless-Notes-4.1.0-portable-win64.zip)
-- [View checksums and release notes](https://github.com/Peeksxx/Paperless-Notes/releases/tag/v4.1.0)
+- [Download the Windows installer](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.2.0/Paperless-Notes-4.2.0-setup.exe)
+- [Download the portable ZIP](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.2.0/Paperless-Notes-4.2.0-portable-win64.zip)
+- [View checksums and release notes](https://github.com/Peeksxx/Paperless-Notes/releases/tag/v4.2.0)
 
 The installer is per-user, needs no administrator access, and installs the program to
 `%LOCALAPPDATA%\Programs\Paperless Notes`. Desktop and **Open with** integration are optional and off
@@ -148,7 +148,7 @@ Every shortcut also has a visible button or menu item. Press F1 for the built-in
 
 ## Current limitations
 
-- Windows only, and the 4.1.0 binaries are not code-signed.
+- Windows only, and the 4.2.0 binaries are not code-signed.
 - Notes above 512 KB open without live styling. Files above 10 MB are not opened for editing.
 - Search skips note contents above 2 MB and online-only files. Their names can still appear.
 - Search does not match part of a word in scripts commonly written without spaces, including Chinese
@@ -171,8 +171,8 @@ files, choose **Add folder** and select their existing folder.
 Download `SHA256SUMS.txt` from the release, then run:
 
 ```powershell
-Get-FileHash .\Paperless-Notes-4.1.0-setup.exe -Algorithm SHA256
-Get-FileHash .\Paperless-Notes-4.1.0-portable-win64.zip -Algorithm SHA256
+Get-FileHash .\Paperless-Notes-4.2.0-setup.exe -Algorithm SHA256
+Get-FileHash .\Paperless-Notes-4.2.0-portable-win64.zip -Algorithm SHA256
 ```
 
 Compare the output with the matching entries in `SHA256SUMS.txt`.
@@ -195,10 +195,10 @@ onedir application, verifies its contents, creates the portable ZIP and installe
 
 ## Verification status
 
-The 4.1.0 source passed:
+The 4.2.0 source passed:
 
 - Text hygiene, Ruff lint and formatting, and strict mypy checks.
-- 1,228 functional tests with 91.59 percent coverage.
+- 1,231 functional tests with 91.60 percent coverage.
 - 44 untraced timing and memory tests.
 - 5,300 generated sync worlds and mutation checks.
 - Layout checks at 100, 125, 150 and 200 percent in both themes, at 1365 by 900 and 720 by 480.

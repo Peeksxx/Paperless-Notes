@@ -1,4 +1,4 @@
-"""User settings: one schema-versioned JSON file, typed and range-checked (B9, SEC6)."""
+"""User settings: one schema-versioned JSON file, typed and range-checked."""
 
 from __future__ import annotations
 

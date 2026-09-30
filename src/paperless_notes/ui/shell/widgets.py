@@ -341,6 +341,12 @@ class CaptionButton(QAbstractButton):
         self._active = active
         self.update()
 
+    def set_hover(self, hover: bool) -> None:
+        """Hover from outside Qt's own events, for a button Windows treats as part of the frame."""
+        if hover != self._hover:
+            self._hover = hover
+            self.update()
+
     def apply_theme(self, theme: Theme) -> None:
         self._theme = theme
         self.setFixedSize(theme.metrics.caption_button, theme.metrics.title_bar)

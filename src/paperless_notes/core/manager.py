@@ -1,4 +1,4 @@
-"""One session per note, shared by every view of it (split view, F23), with idle housekeeping."""
+"""One session per note, shared by every view of it (split view), with idle housekeeping."""
 
 from __future__ import annotations
 

@@ -3,7 +3,7 @@
 from typing import Final
 
 PRODUCT_NAME: Final = "Paperless Notes"
-VERSION: Final = "4.1.0"
+VERSION: Final = "4.2.0"
 EXE_NAME: Final = "Paperless Notes.exe"
 AUTHOR_HANDLE: Final = "@peeksxx"
 DISCORD_HANDLE: Final = "@peeksxx"

@@ -1,4 +1,4 @@
-"""Which images a note may display (SEC1).
+"""Which images a note may display.
 
 Only local raster images inside the note's own folder tree are allowed. Anything with a scheme
 (``file:``, ``http:``, ``data:``, a drive letter), anything rooted or UNC, ``..``, alternate data

@@ -1,7 +1,7 @@
 """Evidence about a note's file: cloud state, conflict copies, file identity and timestamps.
 
 Every probe is cheap and bounded. Evidence is never proof: the in-sync bit in particular is a hypothesis
-to calibrate (ADR-0006), exposed with a confidence rather than as a fact.
+to calibrate, exposed with a confidence rather than as a fact.
 """
 
 from __future__ import annotations

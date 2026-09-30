@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import ctypes
 import logging
+from collections.abc import Callable
 from ctypes import wintypes
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QMouseEvent, QResizeEvent, QShowEvent
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QCursor, QMouseEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QMenu, QSizePolicy, QWidget
 
 from paperless_notes.ui.shell.topbar import Breadcrumbs, SearchBox, crumbs_for, icon_button
@@ -36,6 +37,16 @@ _DWMWA_BORDER_COLOR = 34
 _ROUND = 2
 _ROUND_SMALL = 3
 _NO_ROUND = 1
+WM_NCHITTEST = 0x0084
+WM_NCMOUSEMOVE = 0x00A0
+WM_NCLBUTTONDOWN = 0x00A1
+WM_NCLBUTTONUP = 0x00A2
+WM_NCLBUTTONDBLCLK = 0x00A3
+WM_NCMOUSELEAVE = 0x02A2
+HTMAXBUTTON = 9
+_GWL_STYLE = -16
+_WS_THICKFRAME = 0x00040000
+_SWP_FRAME_ONLY = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020
 
 
 def edges_at(pos: QPoint, size: QSize, border: int = RESIZE_BORDER) -> Qt.Edge:
@@ -81,6 +92,13 @@ def colorref(color: str) -> int:
     return r | (g << 8) | (b << 16)
 
 
+def native_handle(widget: QWidget) -> wintypes.HWND | None:
+    """The widget's window handle, only when Qt runs on the Windows platform (not offscreen)."""
+    if QApplication.platformName() != "windows":
+        return None
+    return wintypes.HWND(int(widget.winId()))
+
+
 def _set_attribute(dwm: ctypes.WinDLL, hwnd: wintypes.HWND, attribute: int, value: int) -> None:
     data = ctypes.c_int(value)
     dwm.DwmSetWindowAttribute(hwnd, attribute, ctypes.byref(data), ctypes.sizeof(data))
@@ -89,9 +107,11 @@ def _set_attribute(dwm: ctypes.WinDLL, hwnd: wintypes.HWND, attribute: int, valu
 def request_native_decoration(window: QWidget, maximized: bool, theme: Theme | None = None) -> bool:
     """Ask DWM for the shadow, rounded corners when not maximized, dark mode and a border in the theme's
     hairline colour. Cosmetic: failures are logged."""
+    hwnd = native_handle(window)
+    if hwnd is None:
+        return False
     try:
         dwm = ctypes.WinDLL("dwmapi")
-        hwnd = wintypes.HWND(int(window.winId()))
         dwm.DwmExtendFrameIntoClientArea(hwnd, ctypes.byref(_Margins(1, 1, 1, 1)))
         _set_attribute(dwm, hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE, _NO_ROUND if maximized else _ROUND)
         if theme is not None:
@@ -105,15 +125,126 @@ def request_native_decoration(window: QWidget, maximized: bool, theme: Theme | N
 
 def round_popup(widget: QWidget, theme: Theme) -> bool:
     """Rounded corners and a border colour for a menu or tooltip window on Windows 11. Cosmetic."""
+    hwnd = native_handle(widget)
+    if hwnd is None:
+        return False
     try:
         dwm = ctypes.WinDLL("dwmapi")
-        hwnd = wintypes.HWND(int(widget.winId()))
         _set_attribute(dwm, hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE, _ROUND_SMALL)
         _set_attribute(dwm, hwnd, _DWMWA_BORDER_COLOR, colorref(theme.palette.border_strong))
     except OSError as exc:
         logger.debug("Popup decoration unavailable: %s", exc)
         return False
     return True
+
+
+def allow_snap_layouts(window: QWidget) -> bool:
+    """Give the frameless window the sizing style: Windows 11 offers Snap Layouts only to resizable windows.
+    Qt keeps the whole window as client area, so the geometry and the look do not change."""
+    hwnd = native_handle(window)
+    if hwnd is None:
+        return False
+    try:
+        user32 = ctypes.WinDLL("user32")
+        user32.GetWindowLongW.restype = ctypes.c_long
+        style = user32.GetWindowLongW(hwnd, _GWL_STYLE)
+        if not style & _WS_THICKFRAME:
+            user32.SetWindowLongW(hwnd, _GWL_STYLE, ctypes.c_long(style | _WS_THICKFRAME))
+            user32.SetWindowPos(hwnd, None, 0, 0, 0, 0, _SWP_FRAME_ONLY)
+    except OSError as exc:
+        logger.info("Snap Layouts unavailable: %s", exc)
+        return False
+    return True
+
+
+def screen_to_client(window: QWidget, x: int, y: int) -> QPointF | None:
+    """A physical screen point in the window's logical coordinates, or None when Windows cannot map it."""
+    hwnd = native_handle(window)
+    if hwnd is None:
+        return None
+    try:
+        point = wintypes.POINT(x, y)
+        if not ctypes.WinDLL("user32").ScreenToClient(hwnd, ctypes.byref(point)):
+            return None
+    except OSError:
+        return None
+    ratio = window.devicePixelRatioF() or 1.0
+    return QPointF(point.x / ratio, point.y / ratio)
+
+
+def _signed_words(value: int) -> tuple[int, int]:
+    return ctypes.c_short(value & 0xFFFF).value, ctypes.c_short((value >> 16) & 0xFFFF).value
+
+
+class MaximizeHitTest(QObject):
+    """Reports the painted maximize button to Windows as the window's maximize button, so hovering it opens
+    the Snap Layouts flyout on Windows 11. Windows then sends the button's hover and clicks as non-client
+    messages, which are passed on to the button here."""
+
+    POLL_MS = 40
+
+    def __init__(
+        self,
+        window: QWidget,
+        button: CaptionButton,
+        to_client: Callable[[QWidget, int, int], QPointF | None] = screen_to_client,
+    ) -> None:
+        super().__init__(window)
+        self._window = window
+        self._button = button
+        self._to_client = to_client
+        self._poll = QTimer(self)
+        self._poll.setInterval(self.POLL_MS)
+        self._poll.timeout.connect(self._check_pointer)
+
+    def over_button(self, x: int, y: int) -> bool:
+        if not self._button.isVisible() or not self._button.isEnabled():
+            return False
+        point = self._to_client(self._window, x, y)
+        if point is None:
+            return False
+        local = self._button.mapFrom(self._window, point.toPoint())
+        return self._button.rect().contains(local)
+
+    def handle(self, message: int) -> int | None:
+        """The result for a native message that concerns the maximize button, or None to let Qt handle it."""
+        msg = wintypes.MSG.from_address(message)
+        kind = msg.message
+        if kind == WM_NCHITTEST:
+            return HTMAXBUTTON if self.over_button(*_signed_words(msg.lParam)) else None
+        if kind == WM_NCMOUSELEAVE:
+            self._release()
+            return None
+        if msg.wParam != HTMAXBUTTON:
+            return None
+        if kind == WM_NCMOUSEMOVE:
+            self._set_hover(True)
+            return None
+        if kind in (WM_NCLBUTTONDOWN, WM_NCLBUTTONDBLCLK):
+            self._set_hover(True)
+            self._button.setDown(True)
+            return 0
+        if kind == WM_NCLBUTTONUP:
+            if self._button.isDown():
+                self._button.setDown(False)
+                self._button.click()
+            return 0
+        return None
+
+    def _set_hover(self, hover: bool) -> None:
+        self._button.set_hover(hover)
+        if hover and not self._poll.isActive():
+            self._poll.start()
+
+    def _check_pointer(self) -> None:
+        local = self._button.mapFromGlobal(QCursor.pos())
+        if not self._button.rect().contains(local):
+            self._release()
+
+    def _release(self) -> None:
+        self._poll.stop()
+        self._button.setDown(False)
+        self._set_hover(False)
 
 
 class PopupRounder(QObject):

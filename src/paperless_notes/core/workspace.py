@@ -1,4 +1,4 @@
-"""Open tabs and window placement for this PC (S1, S2, S3, SEC6).
+"""Open tabs and window placement for this PC.
 
 Restore is lazy: the UI creates a tab per entry and opens the note only when the tab is first shown.
 Tabs whose file is missing (for example not yet synced) are kept until the user closes them.

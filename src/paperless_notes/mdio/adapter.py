@@ -1,4 +1,4 @@
-"""The editor model: the note's source text in one shared ``QTextDocument`` (ADR-0001, option S).
+"""The editor model: the note's source text in one shared ``QTextDocument``.
 
 The document holds the only live copy of the text. Views (tabs, split panes) attach to the same
 document, so they share undo history and the session. External reloads replace only the changed

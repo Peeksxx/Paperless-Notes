@@ -1,4 +1,4 @@
-"""A set of watched note folders with a change-event stream and a text-extraction hook (F18, F19, F24).
+"""A set of watched note folders with a change-event stream and a text-extraction hook.
 
 The index lives here only as file metadata. Full-text search (`core.search_index`) stores its index on disk
 and uses ``extract_text`` so unreadable notes are skipped consistently.

@@ -1,4 +1,4 @@
-"""Run-at-logon registration (SEC4): quoted path, least-privilege access, frozen builds only, removable."""
+"""Run-at-logon registration: quoted path, least-privilege access, frozen builds only, removable."""
 
 from __future__ import annotations
 

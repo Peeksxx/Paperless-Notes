@@ -1,4 +1,4 @@
-"""Icons painted in memory (SEC5): nothing is written to or read from %TEMP%."""
+"""Icons painted in memory: nothing is written to or read from %TEMP%."""
 
 from __future__ import annotations
 

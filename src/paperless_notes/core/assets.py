@@ -1,4 +1,4 @@
-"""Images copied into a note's folder (F08, ADR-0008).
+"""Images copied into a note's folder.
 
 Layout: ``<note folder>/assets/<name>-<first 12 hex of SHA-256>.<ext>``, referenced from the note as
 ``assets/<file>``. Names are lower-case ASCII letters, digits and dashes, so they are valid everywhere,

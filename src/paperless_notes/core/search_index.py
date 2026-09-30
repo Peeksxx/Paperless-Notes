@@ -1,4 +1,4 @@
-"""Local full-text index of library notes with their tags (SQLite FTS5, ADR-0009).
+"""Local full-text index of library notes with their tags (SQLite FTS5).
 
 The database lives in the per-machine state folder, never beside notes. ``IndexStore`` is the synchronous
 database layer; ``SearchIndex`` runs every database and file job on its own one-thread executor, one job at

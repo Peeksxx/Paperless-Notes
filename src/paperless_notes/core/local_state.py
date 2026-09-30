@@ -1,4 +1,4 @@
-"""Per-machine state that is not a user setting: soft read-only locks (F35) and the install id.
+"""Per-machine state that is not a user setting: soft read-only locks and the install id.
 
 A soft lock never touches the synced file's attributes; it only makes this PC open the note read-only.
 """

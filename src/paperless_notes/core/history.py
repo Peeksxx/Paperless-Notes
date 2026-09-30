@@ -1,4 +1,4 @@
-"""Local version history (replaces the old backup pile; K1, K2, K4, K8, SEC10).
+"""Local version history (replaces the old backup pile).
 
 Layout under ``history/``: one folder per note, named by a hash of the note's normalised path plus a
 readable name, holding ``meta.json``, content-addressed ``blobs/<sha256>.z`` (zlib) and one empty marker

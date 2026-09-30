@@ -1,4 +1,4 @@
-"""Every editor view of each open note document (split view, ADR-0009).
+"""Every editor view of each open note document (split view).
 
 Two views of one note share one ``QTextDocument`` and so one ``MarkdownHighlighter``: concealment and
 heading sizes are formats of the shared document. This registry creates the highlighter once per

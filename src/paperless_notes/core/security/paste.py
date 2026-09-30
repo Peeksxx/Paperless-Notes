@@ -1,4 +1,4 @@
-"""Paste and drop policy (SEC3, F09, ADR-0008).
+"""Paste and drop policy.
 
 Paste is plain text unless the clipboard's HTML carries real structure (headings, emphasis, links,
 lists, quotes, code, tables); then it is converted to Markdown through an allow-list. Scripts, styles,

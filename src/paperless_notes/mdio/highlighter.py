@@ -1,7 +1,7 @@
 """Live styling of Markdown source: markers dimmed or concealed, headings larger, emphasis rendered.
 
 The highlighter only sets layout formats and block states. It never edits the document, so it adds no
-undo steps and cannot change the text (ADR-0007). With concealment on, every line except the caret line
+undo steps and cannot change the text. With concealment on, every line except the caret line
 hides its eligible markers: inline markers shrink to zero width, block markers (bullets, task boxes,
 quote marks, rules) keep their width but become transparent so the editor can paint a symbol in place.
 """

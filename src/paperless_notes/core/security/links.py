@@ -1,4 +1,4 @@
-"""Which links may be opened (SEC11): only http, https and mailto, and only on an explicit user action."""
+"""Which links may be opened: only http, https and mailto, and only on an explicit user action."""
 
 from __future__ import annotations
 

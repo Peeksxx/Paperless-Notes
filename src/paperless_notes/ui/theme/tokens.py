@@ -1,4 +1,4 @@
-"""Design tokens (docs/DESIGN.md): graphite neutrals, state colours, type, spacing, radius, motion.
+"""Design tokens: graphite neutrals, state colours, type, spacing, radius, motion.
 
 The interface and content use Segoe UI Variable; captions, paths, times, counts, shortcuts and sync state
 use its small optical size. Cascadia Mono is kept for code, diffs and the Mono note face. Saturated colour

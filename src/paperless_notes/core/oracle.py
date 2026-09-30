@@ -1,8 +1,8 @@
-"""Sync oracle: a pure, deterministic classifier of a note's disk state (ADR-0006).
+"""Sync oracle: a pure, deterministic classifier of a note's disk state.
 
 ``diagnose`` maps one ``NoteContext`` to exactly one primary ``Diagnosis``. It reads no files and no clocks,
 so the same context always gives the same answer. Rules are checked in the order of ``RULES`` and the first
-that matches wins; ADR-0006 lists the same table. Default actions are never destructive.
+that matches wins. Default actions are never destructive.
 """
 
 from __future__ import annotations

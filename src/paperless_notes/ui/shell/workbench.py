@@ -34,6 +34,7 @@ from paperless_notes.ui.editor.authoring import AuthoringHost
 from paperless_notes.ui.editor.views import DocumentViews
 from paperless_notes.ui.shell.dashboard import Dashboard
 from paperless_notes.ui.shell.history import Navigation, TabHistory
+from paperless_notes.ui.shell.labels import note_title
 from paperless_notes.ui.shell.page import NotePage
 from paperless_notes.ui.shell.page_factory import PageFactory
 from paperless_notes.ui.shell.split import SplitView, safe_split_path
@@ -267,7 +268,7 @@ class Workbench(QWidget):
         index = len(self._tabs)
         self._tabs.append(tab)
         self.strip.blockSignals(True)
-        self.strip.addTab(ntpath.basename(tab.path))
+        self.strip.addTab(note_title(tab.path))
         self.strip.set_pinned(index, tab.pinned)
         self.strip.blockSignals(False)
         self._refresh_label(tab)
@@ -315,7 +316,7 @@ class Workbench(QWidget):
         index = self._tabs.index(tab) if tab in self._tabs else -1
         if index < 0:
             return
-        name = ntpath.basename(tab.path)
+        name = note_title(tab.path)
         state = tab.session.state if tab.session is not None else None
         self.strip.setTabText(index, name + (_MARKS.get(state, "") if state is not None else ""))
         described = state.value.replace("_", " ") if state is not None else "not opened yet"

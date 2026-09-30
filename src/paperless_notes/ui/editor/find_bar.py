@@ -1,4 +1,4 @@
-"""Find and replace in one editor view (F21).
+"""Find and replace in one editor view.
 
 Each view has its own controller and bar, so two panes of one note keep separate searches. Highlights
 are extra selections of this view only: they never touch the document, its formats or the undo stack,

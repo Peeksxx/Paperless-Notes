@@ -1,4 +1,4 @@
-"""Export a note to HTML, PDF or plain text, and copy it as Markdown or rich text (ADR-0009).
+"""Export a note to HTML, PDF or plain text, and copy it as Markdown or rich text.
 
 Every route is a projection: the note's source, dirty state, history, ledger and undo stack are never
 touched. HTML, PDF and rich copy share ``mdio.render`` and one image policy: an image appears only when

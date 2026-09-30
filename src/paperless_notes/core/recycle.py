@@ -1,4 +1,4 @@
-"""Delete to the Recycle Bin (F36) with ``SHFileOperationW``; no dependency.
+"""Delete to the Recycle Bin with ``SHFileOperationW``; no dependency.
 
 ``FOF_WANTNUKEWARNING`` makes Windows ask before a permanent delete (for example on a volume without a
 Recycle Bin), so a note is never silently destroyed.

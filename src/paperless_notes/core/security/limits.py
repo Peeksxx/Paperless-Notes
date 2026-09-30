@@ -1,4 +1,4 @@
-"""Input limits (SEC8) in one place, so settings, the session and the editor agree."""
+"""Input limits in one place, so settings, the session and the editor agree."""
 
 from __future__ import annotations
 

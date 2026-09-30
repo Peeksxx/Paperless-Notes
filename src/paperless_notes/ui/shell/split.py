@@ -1,4 +1,4 @@
-"""Two-pane split view (ADR-0009): the tabbed pane plus one secondary pane showing one note.
+"""Two-pane split view: the tabbed pane plus one secondary pane showing one note.
 
 Both panes build their views through the same ``PageFactory``, so two views of one path share one
 session, adapter and document, with one saver, monitor, draft stream, ledger and diagnosis; each view
@@ -30,6 +30,7 @@ from paperless_notes.core import pathid
 from paperless_notes.core.files import is_note_file
 from paperless_notes.core.session import FlushReason
 from paperless_notes.ui.shell.flow import FlowLayout
+from paperless_notes.ui.shell.labels import note_title
 from paperless_notes.ui.shell.page import NotePage
 from paperless_notes.ui.shell.page_factory import PageFactory
 
@@ -183,7 +184,7 @@ class SplitView(QObject):
         self.page = page
         self.pane.empty.hide()
         self.pane.body.addWidget(page, 1)
-        self.pane.title.setText(ntpath.basename(page.session.path))
+        self.pane.title.setText(note_title(page.session.path))
         self.pane.title.setToolTip(page.session.path)
         self._rename_connection = page.session.path_changed.connect(self._on_renamed)
         self._set_active(True)
@@ -297,7 +298,7 @@ class SplitView(QObject):
 
     def _on_renamed(self, path: str) -> None:
         if self.pane is not None:
-            self.pane.title.setText(ntpath.basename(path))
+            self.pane.title.setText(note_title(path))
             self.pane.title.setToolTip(path)
         self.changed.emit()
 
@@ -314,7 +315,7 @@ class SplitView(QObject):
             if key in seen:
                 continue
             seen.add(key)
-            action = menu.addAction(ntpath.basename(path))
+            action = menu.addAction(note_title(path))
             action.setToolTip(path)
             action.triggered.connect(lambda _c=False, p=path: self.show_note(p))
         if seen:

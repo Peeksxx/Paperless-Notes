@@ -1,5 +1,18 @@
 # Changelog
 
+## 4.2.0 (2026-09-30)
+
+### Interface
+- Hovering the maximize button opens the Windows 11 snap layouts, as in other Windows programs. This
+  needs "Show snap layouts when I hover over a window's maximize button" to be on in Windows Settings
+  (System, Multitasking); it is on by default.
+- Tabs, the path above the note, the window title, the split view header and the "Go to note" commands
+  show note names without the `.md` or `.markdown` extension, the same way the library does. Other
+  extensions, such as `.txt`, stay visible.
+
+### Upgrading from 4.1.0
+- Settings, open tabs, version history and the search index are kept.
+
 ## 4.1.0 (2026-09-30)
 
 ### Fixed

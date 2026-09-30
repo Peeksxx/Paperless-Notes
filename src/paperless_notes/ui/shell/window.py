@@ -43,11 +43,19 @@ from paperless_notes.ui.editor.authoring import (
     system_clipboard_mime,
     system_clipboard_text,
 )
-from paperless_notes.ui.shell.chrome import AppBar, EdgeResizer, PopupRounder, request_native_decoration
+from paperless_notes.ui.shell.chrome import (
+    AppBar,
+    EdgeResizer,
+    MaximizeHitTest,
+    PopupRounder,
+    allow_snap_layouts,
+    request_native_decoration,
+)
 from paperless_notes.ui.shell.commands import Command, CommandRegistry
 from paperless_notes.ui.shell.dialogs import DialogPrompter, Prompter
 from paperless_notes.ui.shell.export import Clipboard, Exporter, system_clipboard
 from paperless_notes.ui.shell.help import HelpPanel, HintBubble, pending_hints
+from paperless_notes.ui.shell.labels import note_title
 from paperless_notes.ui.shell.library_actions import LibraryActions
 from paperless_notes.ui.shell.note_tools import NoteTools
 from paperless_notes.ui.shell.palette import PaletteSources, SearchPalette
@@ -96,6 +104,7 @@ class MainWindow(QMainWindow):
         services: ShellServices | None = None,
     ) -> None:
         super().__init__()
+        self._maximize_hit: MaximizeHitTest | None = None
         self.services = services or ShellServices(Settings())
         self.settings = self.services.settings
         self._paths = paths
@@ -154,6 +163,8 @@ class MainWindow(QMainWindow):
         self.bar.maximize_toggled.connect(self.toggle_maximized)
         self.bar.close_requested.connect(self.close)
         outer.addWidget(self.bar)
+        if not self._native_frame:
+            self._maximize_hit = MaximizeHitTest(self, self.bar.maximize_button)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setHandleWidth(1)
@@ -391,7 +402,7 @@ class MainWindow(QMainWindow):
             commands.append(
                 Command(
                     f"goto:{path}",
-                    f"Go to note: {ntpath.basename(path)}",
+                    f"Go to note: {note_title(path)}",
                     partial(self._go_to, path),
                     "",
                     "Notes",
@@ -559,7 +570,7 @@ class MainWindow(QMainWindow):
         self.bar.set_navigation(
             self.workbench.navigation.can_go_back(), self.workbench.navigation.can_go_forward()
         )
-        name = ntpath.basename(session.path) if session is not None else ""
+        name = note_title(session.path) if session is not None else ""
         title = f"{name}  \N{MIDDLE DOT}  {PRODUCT_NAME}" if name else PRODUCT_NAME
         self.setWindowTitle(title)
         self.sidebar.set_home(self.workbench.home_visible())
@@ -719,8 +730,19 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         if not self._native_frame:
             request_native_decoration(self, self.isMaximized(), self.theme)
+            allow_snap_layouts(self)
         if not self._hints_started:
             QTimer.singleShot(0, self, self.start_hints)
+
+    def nativeEvent(  # noqa: N802 - Qt override
+        self, event_type: QByteArray | bytes | bytearray | memoryview, message: int
+    ) -> object:
+        kind = event_type.data() if isinstance(event_type, QByteArray) else bytes(event_type)
+        if self._maximize_hit is not None and kind == b"windows_generic_MSG":
+            result = self._maximize_hit.handle(int(message))
+            if result is not None:
+                return True, result
+        return super().nativeEvent(event_type, message)
 
     def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
         kind = event.type()
@@ -740,6 +762,7 @@ class MainWindow(QMainWindow):
             self.bar.set_maximized(self.isMaximized())
             if not self._native_frame and self.isVisible():
                 request_native_decoration(self, self.isMaximized(), self.theme)
+                allow_snap_layouts(self)
         super().changeEvent(event)
 
     def shutdown(self) -> list[str]:

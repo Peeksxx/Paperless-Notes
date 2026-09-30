@@ -1,4 +1,4 @@
-"""Validation of names for new or renamed notes (SEC7), including OneDrive's sync rules."""
+"""Validation of names for new or renamed notes, including OneDrive's sync rules."""
 
 from __future__ import annotations
 

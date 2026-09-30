@@ -1,6 +1,6 @@
 """One monochrome icon language, painted as vectors on a 16 by 16 grid at any size and pixel ratio.
 
-Stroke 1.5 units, round caps and joins, no fills except small dots. Nothing is read from disk (SEC5) and no
+Stroke 1.5 units, round caps and joins, no fills except small dots. Nothing is read from disk and no
 SVG module is loaded.
 """
 
