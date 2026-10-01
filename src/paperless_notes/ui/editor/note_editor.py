@@ -10,9 +10,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
-from PySide6.QtCore import QMimeData, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QContextMenuEvent,
     QFocusEvent,
     QFont,
     QInputMethodEvent,
@@ -25,11 +26,12 @@ from PySide6.QtGui import (
     QPen,
     QResizeEvent,
     QTextBlock,
+    QTextCharFormat,
     QTextCursor,
     QTextDocument,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QPlainTextEdit, QToolTip, QWidget
+from PySide6.QtWidgets import QMenu, QPlainTextEdit, QToolTip, QWidget
 
 from paperless_notes.core.security.links import open_link
 from paperless_notes.mdio.highlighter import BlockDecor, HighlightTheme, MarkdownHighlighter, lexer_state
@@ -83,11 +85,13 @@ def highlight_theme(theme: Theme, note_font: str, point_size: float) -> Highligh
         base_point_size=point_size,
         body_families=NOTE_FONTS.get(note_font, NOTE_FONTS["sans"]),
         mono_family=theme.typography.mono_families[0],
+        spelling=p.state_attention,
     )
 
 
 class NoteEditor(QPlainTextEdit):
     zoom_changed = Signal(int)
+    theme_changed = Signal()
     marks_changed = Signal(int)
     column_changed = Signal(int, int)
     focused = Signal()
@@ -119,6 +123,8 @@ class NoteEditor(QPlainTextEdit):
         self.key_hooks: list[Callable[[QKeyEvent], bool]] = []
         self.focus_out_hooks: list[Callable[[], None]] = []
         self.input_method_hooks: list[Callable[[QInputMethodEvent], None]] = []
+        self.paint_hooks: list[Callable[[QPainter], None]] = []
+        self.context_menu_hooks: list[Callable[[QMenu, QPoint], None]] = []
         self._gutter = _Gutter(self)
         self.cursorPositionChanged.connect(self._on_cursor_moved)
         self.apply_theme(theme)
@@ -172,6 +178,14 @@ class NoteEditor(QPlainTextEdit):
     def point_size(self) -> float:
         return self._theme.typography.note_pt * self._zoom / 100
 
+    @property
+    def theme(self) -> Theme:
+        return self._theme
+
+    @property
+    def note_font(self) -> str:
+        return self._note_font
+
     def apply_theme(self, theme: Theme, note_font: str | None = None) -> None:
         """Colors and fonts only: no undo step, no text change."""
         self._theme = theme
@@ -189,6 +203,7 @@ class NoteEditor(QPlainTextEdit):
         self.setPalette(palette)
         self.viewport().setPalette(palette)
         self._apply_font()
+        self.theme_changed.emit()
 
     def set_note_font(self, note_font: str) -> None:
         self._note_font = note_font
@@ -238,7 +253,9 @@ class NoteEditor(QPlainTextEdit):
 
     def _on_cursor_moved(self) -> None:
         if self._highlighter is not None and self.drives_reveal:
-            self._highlighter.set_active_block(self.textCursor().blockNumber())
+            cursor = self.textCursor()
+            self._highlighter.set_caret(cursor.blockNumber(), cursor.positionInBlock())
+            self._highlighter.set_active_block(cursor.blockNumber())
         self.viewport().update()
 
     def focusInEvent(self, event: QFocusEvent) -> None:  # noqa: N802 - Qt override
@@ -296,6 +313,8 @@ class NoteEditor(QPlainTextEdit):
             decor = self.decor(block)
             if decor is not None:
                 self._paint_decor(painter, block, geometry, decor, width)
+        for hook in list(self.paint_hooks):
+            hook(painter)
         painter.end()
 
     def _paint_decor(
@@ -413,6 +432,26 @@ class NoteEditor(QPlainTextEdit):
                 self.set_zoom(100)
                 return
         super().keyPressEvent(event)
+
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - Qt override
+        menu = self.createStandardContextMenu(event.pos())
+        for hook in list(self.context_menu_hooks):
+            hook(menu, event.pos())
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
+    def font_at(self, block: QTextBlock, offset: int) -> QFont:
+        """The font the text at ``offset`` is drawn in, including the live styling (heading sizes)."""
+        base = self.document().defaultFont()
+        layout = block.layout()
+        if layout is not None:
+            for piece in layout.formats():
+                start: int = piece.start  # type: ignore[attr-defined]
+                length: int = piece.length  # type: ignore[attr-defined]
+                if start <= offset < start + length:
+                    styled: QTextCharFormat = piece.format  # type: ignore[attr-defined]
+                    return styled.font().resolve(base)
+        return base
 
     def focusOutEvent(self, event: QFocusEvent) -> None:  # noqa: N802 - Qt override
         super().focusOutEvent(event)

@@ -26,7 +26,7 @@ from paperless_notes.core.instance import OpenRequest, RequestInbox
 from paperless_notes.core.local_state import LocalStateStore
 from paperless_notes.core.manager import SessionManager
 from paperless_notes.core.paths import AppPaths
-from paperless_notes.core.runtime import QtIOExecutor
+from paperless_notes.core.runtime import MainThreadCollector, QtIOExecutor
 from paperless_notes.core.search_index import DB_NAME, Overview, SearchIndex
 from paperless_notes.core.security.launch import note_paths, refused_message
 from paperless_notes.core.security.limits import InputLimits
@@ -43,11 +43,12 @@ from paperless_notes.ui.editor.authoring import (
     system_clipboard_mime,
     system_clipboard_text,
 )
+from paperless_notes.ui.editor.spelling_assist import SpellService
 from paperless_notes.ui.shell.chrome import (
     AppBar,
     EdgeResizer,
-    MaximizeHitTest,
     PopupRounder,
+    TitleBarHitTest,
     allow_snap_layouts,
     request_native_decoration,
 )
@@ -57,6 +58,7 @@ from paperless_notes.ui.shell.export import Clipboard, Exporter, system_clipboar
 from paperless_notes.ui.shell.help import HelpPanel, HintBubble, pending_hints
 from paperless_notes.ui.shell.labels import note_title
 from paperless_notes.ui.shell.library_actions import LibraryActions
+from paperless_notes.ui.shell.motion import SlideOut
 from paperless_notes.ui.shell.note_tools import NoteTools
 from paperless_notes.ui.shell.palette import PaletteSources, SearchPalette
 from paperless_notes.ui.shell.settings_panel import SettingsDialog
@@ -104,7 +106,9 @@ class MainWindow(QMainWindow):
         services: ShellServices | None = None,
     ) -> None:
         super().__init__()
-        self._maximize_hit: MaximizeHitTest | None = None
+        # The window's worker threads (index, spelling, files) must never run Python's cycle collector.
+        self._collector = MainThreadCollector(parent=self)
+        self._title_hit: TitleBarHitTest | None = None
         self.services = services or ShellServices(Settings())
         self.settings = self.services.settings
         self._paths = paths
@@ -164,14 +168,15 @@ class MainWindow(QMainWindow):
         self.bar.close_requested.connect(self.close)
         outer.addWidget(self.bar)
         if not self._native_frame:
-            self._maximize_hit = MaximizeHitTest(self, self.bar.maximize_button)
+            self._title_hit = TitleBarHitTest(self, self.bar)
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         self.splitter.setChildrenCollapsible(False)
         self.splitter.setHandleWidth(1)
         self.sidebar = Sidebar(t, synced=self.synced)
         self.sidebar.setMaximumWidth(t.metrics.sidebar_max)
         self.sidebar.set_roots(list(self.settings.library_roots))
-        self.splitter.addWidget(self.sidebar)
+        self.sidebar_box = SlideOut(self.sidebar, Qt.Edge.LeftEdge, self._slide_ms)
+        self.splitter.addWidget(self.sidebar_box)
         main = QWidget()
         main_layout = QHBoxLayout(main)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -192,11 +197,16 @@ class MainWindow(QMainWindow):
             lambda page: self.tools.page_menu(page),
             self.synced,
         )
+        self.spelling = SpellService(self._paths.dictionary_file, self.settings.check_spelling, self)
+        self.workbench.factory.spelling = self.spelling
+        self.spelling.start(self._deps.executor)
         main_layout.addWidget(self.workbench, 1)
         self.tool_panel = ToolPanel(t, OutlinePage(t))
-        main_layout.addWidget(self.tool_panel)
+        self.tool_box = SlideOut(self.tool_panel, Qt.Edge.RightEdge, self._slide_ms)
+        main_layout.addWidget(self.tool_box)
         self.help_panel = HelpPanel(t)
-        main_layout.addWidget(self.help_panel)
+        self.help_box = SlideOut(self.help_panel, Qt.Edge.RightEdge, self._slide_ms)
+        main_layout.addWidget(self.help_box)
         self.splitter.addWidget(main)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([t.metrics.sidebar, 1000])
@@ -250,7 +260,6 @@ class MainWindow(QMainWindow):
             lambda: self.bar.geometry().bottom(),
         )
         self.bar.search_requested.connect(lambda: self.open_palette(""))
-        self.bar.home_requested.connect(self.show_home)
         self.bar.sidebar_toggled.connect(self.toggle_sidebar)
         self.bar.back_requested.connect(self.workbench.go_back)
         self.bar.forward_requested.connect(self.workbench.go_forward)
@@ -325,6 +334,7 @@ class MainWindow(QMainWindow):
             ("help", "Help", self.toggle_help, "F1", ("help", "guide", "keyboard", "shortcuts")),
             ("settings", "Settings", self.open_settings, "Ctrl+,", ("preferences", "options")),
             ("history", "Version history", self.open_history, "Ctrl+Shift+H", ("restore", "versions")),
+            ("spelling", "Check spelling on or off", self.toggle_spelling, "", ("spell", "dictionary")),
             (
                 "theme_system",
                 "Theme: Follow Windows",
@@ -520,7 +530,10 @@ class MainWindow(QMainWindow):
         self.workbench.start.set_overview(overview)
 
     def toggle_sidebar(self) -> None:
-        self.sidebar.setVisible(not self.sidebar.isVisible())
+        self.sidebar.setVisible(not SlideOut.is_open(self.sidebar))
+
+    def _slide_ms(self) -> int:
+        return self.theme.ms(self.theme.motion.normal_ms)
 
     def toggle_maximized(self) -> None:
         if self.isMaximized():
@@ -644,10 +657,17 @@ class MainWindow(QMainWindow):
             self._themes.set_accent(settings.accent)
             self._themes.set_reduced_motion(settings.reduced_motion)
         self.workbench.apply_settings(settings)
+        self.spelling.set_enabled(settings.check_spelling)
         if settings.custom_frame != previous.custom_frame:
             self.toast_message("The window frame changes the next time Paperless Notes starts.")
         if not settings.show_hints:
             self.hint.hide()
+
+    def toggle_spelling(self) -> None:
+        self.apply_settings(replace(self.settings, check_spelling=not self.settings.check_spelling))
+        self.toast_message(
+            "Spelling is checked." if self.settings.check_spelling else "Spelling is not checked."
+        )
 
     def _persist_settings(self) -> None:
         store = self.services.settings_store
@@ -738,8 +758,8 @@ class MainWindow(QMainWindow):
         self, event_type: QByteArray | bytes | bytearray | memoryview, message: int
     ) -> object:
         kind = event_type.data() if isinstance(event_type, QByteArray) else bytes(event_type)
-        if self._maximize_hit is not None and kind == b"windows_generic_MSG":
-            result = self._maximize_hit.handle(int(message))
+        if self._title_hit is not None and kind == b"windows_generic_MSG":
+            result = self._title_hit.handle(int(message))
             if result is not None:
                 return True, result
         return super().nativeEvent(event_type, message)
@@ -776,6 +796,10 @@ class MainWindow(QMainWindow):
         self.tools.dispose()
         self.index.close()
         self.workbench.split.dispose()
+        executor = self._deps.executor
+        if isinstance(executor, QtIOExecutor):
+            executor.drain(5.0)
+        self._collector.stop()
         return unsaved
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override

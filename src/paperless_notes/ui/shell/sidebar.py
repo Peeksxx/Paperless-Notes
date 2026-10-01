@@ -7,7 +7,9 @@ from __future__ import annotations
 import logging
 import ntpath
 import os
+import time
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from PySide6.QtCore import (
     QEvent,
@@ -27,16 +29,20 @@ from PySide6.QtGui import (
     QFontMetrics,
     QHelpEvent,
     QIcon,
+    QKeyEvent,
     QKeySequence,
     QMouseEvent,
     QPainter,
     QPaintEvent,
     QPen,
+    QPixmap,
+    QResizeEvent,
     QStandardItem,
     QStandardItemModel,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QLabel,
     QMenu,
     QStyle,
@@ -52,7 +58,15 @@ from PySide6.QtWidgets import (
 from paperless_notes.core import pathid
 from paperless_notes.core.files import is_note_file
 from paperless_notes.ui.shell.labels import note_title
-from paperless_notes.ui.shell.widgets import IDLE, RowButton, SectionLabel, meta_font, paint_dot
+from paperless_notes.ui.shell.motion import SlideOut, Tween, faded
+from paperless_notes.ui.shell.widgets import (
+    IDLE,
+    RowButton,
+    SectionLabel,
+    meta_font,
+    paint_dot,
+    tone_text_color,
+)
 from paperless_notes.ui.theme.icons import draw_glyph, glyph_icon
 from paperless_notes.ui.theme.tokens import Theme
 
@@ -137,8 +151,22 @@ class LibraryModel(QStandardItemModel):
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class Reveal:
+    """A folder opening or closing: the rows below ``anchor`` before and after the change, and the height of
+    the rows that appear or go (at most what fits in view)."""
+
+    opening: bool
+    anchor: int
+    height: int
+    before: QPixmap
+    after: QPixmap
+
+
 class LibraryTree(QTreeView):
-    """Full-width rounded row highlights; the rows themselves are painted by ``LibraryDelegate``."""
+    """Rounded row highlights that start at the row's own level, so the guides of its parent folders stay
+    clear of them; the rows themselves are painted by ``LibraryDelegate``. A click on a folder opens or
+    closes it; the rows unroll below it (fading in) while the rows further down slide."""
 
     new_note_in = Signal(str)
 
@@ -147,27 +175,177 @@ class LibraryTree(QTreeView):
         self.setObjectName("LibraryTree")
         self.theme = theme
         self.hover = QPersistentModelIndex()
+        self._was_hover = QPersistentModelIndex()
+        self._hover_in = Tween(self, 1.0, lambda _value: self.viewport().update())
+        self._hover_out = Tween(self, 0.0, lambda _value: self.viewport().update())
         self.setMouseTracking(True)
         self.setIndentation(16)
         self.setUniformRowHeights(True)
         self.setHeaderHidden(True)
-        self.setAnimated(not theme.reduced_motion)
-        self.setExpandsOnDoubleClick(True)
+        self.setAnimated(False)
+        self.setExpandsOnDoubleClick(False)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.reveal: Reveal | None = None
+        self._progress = Tween(self, 1.0, lambda _value: self.viewport().update())
+        self._grabbing = False
+        self._toggled: tuple[QPersistentModelIndex, float] | None = None
+        self.clicked.connect(self._on_clicked)
+
+    def is_folder(self, index: QModelIndex | QPersistentModelIndex) -> bool:
+        return index.isValid() and index.data(KIND_ROLE) in (ROOT, FOLDER)
+
+    def set_open(self, index: QModelIndex | QPersistentModelIndex, opened: bool) -> None:
+        """Open or close a folder row; animated unless motion is reduced or the row is out of view."""
+        if not self.is_folder(index) or self.isExpanded(index) == opened:
+            return
+        self.end_reveal()
+        duration = self.theme.ms(self.theme.motion.normal_ms)
+        anchor = self.visualRect(index).bottom() + 1
+        if duration <= 0 or not self.isVisible() or not 0 < anchor < self.viewport().height():
+            self.setExpanded(index, opened)
+            return
+        height = 0 if opened else self._rows_below(index, anchor)
+        before = self._snapshot()
+        self.setExpanded(index, opened)
+        self.executeDelayedItemsLayout()
+        if opened:
+            height = self._rows_below(index, anchor)
+        if height <= 0:
+            return
+        self.reveal = Reveal(opened, anchor, height, before, self._snapshot())
+        self._progress.jump(0.0)
+        self._progress.to(1.0, duration, done=self.end_reveal)
+
+    def end_reveal(self) -> None:
+        if self.reveal is not None:
+            self._progress.stop()
+            self.reveal = None
+            self.viewport().update()
+
+    def _rows_below(self, index: QModelIndex | QPersistentModelIndex, anchor: int) -> int:
+        """Height of the open folder's visible rows, up to the bottom of the view."""
+        room = self.viewport().height() - anchor
+        total = 0
+        below = self.indexBelow(index)
+        while below.isValid() and total < room and self._inside(below, index):
+            total += self.visualRect(below).height()
+            below = self.indexBelow(below)
+        return min(total, room)
+
+    @staticmethod
+    def _inside(index: QModelIndex, folder: QModelIndex | QPersistentModelIndex) -> bool:
+        target = QPersistentModelIndex(folder)
+        parent = index.parent()
+        while parent.isValid():
+            if QPersistentModelIndex(parent) == target:
+                return True
+            parent = parent.parent()
+        return False
+
+    def _snapshot(self) -> QPixmap:
+        self._grabbing = True
+        try:
+            return self.viewport().grab()
+        finally:
+            self._grabbing = False
+
+    def _on_clicked(self, index: QModelIndex) -> None:
+        """A click opens or closes a folder; the second click of a double click is ignored."""
+        if not self.is_folder(index):
+            return
+        now = time.monotonic()
+        last = self._toggled
+        if (
+            last is not None
+            and last[0] == index
+            and now - last[1] < QApplication.doubleClickInterval() / 1000
+        ):
+            return
+        self._toggled = (QPersistentModelIndex(index), now)
+        self.set_open(index, not self.isExpanded(index))
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+        """The chevron opens and closes through ``set_open`` so it animates the same way."""
+        point = event.position().toPoint()
+        index = self.indexAt(point)
+        if event.button() == Qt.MouseButton.LeftButton and self.is_folder(index):
+            item = self.visualRect(index)
+            if item.left() - self.indentation() <= point.x() < item.left():
+                self.set_open(index, not self.isExpanded(index))
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
+        index = self.currentIndex()
+        key = event.key()
+        plain = not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
+        if plain and self.is_folder(index):
+            opened = self.isExpanded(index)
+            if (key == Qt.Key.Key_Right and not opened) or (key == Qt.Key.Key_Left and opened):
+                self.set_open(index, not opened)
+                return
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+                self.set_open(index, not opened)
+                return
+        super().keyPressEvent(event)
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802 - Qt override
+        self.end_reveal()
+        super().scrollContentsBy(dx, dy)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+        self.end_reveal()
+        super().resizeEvent(event)
+
+    def reset(self) -> None:
+        self.end_reveal()
+        super().reset()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+        """While a folder opens or closes: the rows above as they are, the folder's rows between ``anchor``
+        and the moving edge, and the rows below that edge moved with it."""
+        reveal = self.reveal
+        if reveal is None or self._grabbing:
+            super().paintEvent(event)
+            return
+        progress = float(self._progress.value)
+        shown = progress if reveal.opening else 1.0 - progress
+        gap = round(reveal.height * shown)
+        width = self.viewport().width()
+        painter = QPainter(self.viewport())
+        painter.setClipRect(QRect(0, 0, width, reveal.anchor))
+        painter.drawPixmap(0, 0, reveal.after)
+        painter.setClipRect(QRect(0, reveal.anchor, width, gap))
+        painter.setOpacity(shown)
+        painter.drawPixmap(0, 0, reveal.after if reveal.opening else reveal.before)
+        painter.setOpacity(1.0)
+        painter.setClipRect(QRect(0, reveal.anchor + gap, width, self.viewport().height()))
+        painter.drawPixmap(0, gap, reveal.before if reveal.opening else reveal.after)
+        painter.end()
+
+    def highlight_rect(self, index: QModelIndex | QPersistentModelIndex, row: QRectF) -> QRectF:
+        """The row's highlight, from its own chevron column to the right edge."""
+        left = max(4, self.visualRect(index).left() - self.indentation() - 2)
+        return QRectF(left, row.top() + 1, self.viewport().width() - 4 - left, row.height() - 2)
 
     def drawRow(  # noqa: N802 - Qt override
         self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
     ) -> None:
         p = self.theme.palette
         row = QRectF(option.rect)  # type: ignore[attr-defined]
-        rect = QRectF(4, row.top() + 1, self.viewport().width() - 8, row.height() - 2)
+        rect = self.highlight_rect(index, row)
         selected = self.selectionModel() is not None and self.selectionModel().isSelected(index)
-        hovered = self.hover.isValid() and QPersistentModelIndex(index) == self.hover
-        if selected or hovered:
+        here = QPersistentModelIndex(index)
+        hovered = self.hover.isValid() and here == self.hover
+        glow = float(self._hover_in.value) if hovered else 0.0
+        if not hovered and self._was_hover.isValid() and here == self._was_hover:
+            glow = float(self._hover_out.value)
+        if selected or glow > 0:
             painter.save()
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(p.selected if selected else p.hover))
+            painter.setBrush(QColor(p.selected) if selected else faded(p.hover, glow))
             painter.drawRoundedRect(rect, self.theme.radius.md, self.theme.radius.md)
             painter.restore()
         super().drawRow(painter, option, index)
@@ -189,14 +367,23 @@ class LibraryTree(QTreeView):
         index = self.indexAt(event.position().toPoint())
         hover = QPersistentModelIndex(index) if index.isValid() else QPersistentModelIndex()
         if hover != self.hover:
-            self.hover = hover
-            self.viewport().update()
+            self._set_hover(hover)
         super().mouseMoveEvent(event)
 
     def leaveEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
-        self.hover = QPersistentModelIndex()
-        self.viewport().update()
+        self._set_hover(QPersistentModelIndex())
         super().leaveEvent(event)
+
+    def _set_hover(self, hover: QPersistentModelIndex) -> None:
+        """The highlight fades out on the row the pointer left and in on the row it entered."""
+        duration = self.theme.ms(self.theme.motion.fast_ms)
+        self._was_hover = self.hover
+        self._hover_out.jump(self._hover_in.value)
+        self._hover_out.to(0.0, duration)
+        self.hover = hover
+        self._hover_in.jump(0.0)
+        self._hover_in.to(1.0, duration)
+        self.viewport().update()
 
 
 class LibraryDelegate(QStyledItemDelegate):
@@ -331,7 +518,8 @@ class LibraryDelegate(QStyledItemDelegate):
 
 
 class SyncSummary(QWidget):
-    """The worst state among open notes, in words, with a dot."""
+    """The worst state among open notes, in words; the text takes the warning colour while a note is saving
+    and the error colour when one needs attention, fading between them."""
 
     def __init__(self, theme: Theme) -> None:
         super().__init__()
@@ -339,26 +527,34 @@ class SyncSummary(QWidget):
         self.tone = IDLE
         self.text = "No notes open"
         self.annotation = ""
+        self._color = Tween(self, QColor(self._text_color()), lambda _value: self.update())
         self.setFixedHeight(36)
         self.setAccessibleName(self.text)
 
+    def _text_color(self) -> str:
+        p = self._theme.palette
+        return tone_text_color(self.tone, p, p.text_secondary)
+
+    def text_color(self) -> QColor:
+        return QColor(self._color.value)
+
     def set_summary(self, tone: str, text: str, annotation: str = "", detail: str = "") -> None:
         self.tone, self.text, self.annotation = tone, text, annotation
+        self._color.to(QColor(self._text_color()), self._theme.ms(self._theme.motion.normal_ms))
         self.setAccessibleName(text)
         self.setToolTip(detail or text)
         self.update()
 
     def apply_theme(self, theme: Theme) -> None:
         self._theme = theme
-        self.update()
+        self._color.jump(QColor(self._text_color()))
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
         p = self._theme.palette
         painter = QPainter(self)
         painter.setPen(QPen(QColor(p.border), 1))
         painter.drawLine(QPoint(0, 0), QPoint(self.width(), 0))
-        mid = self.height() / 2 + 0.5
-        paint_dot(painter, QPointF(20, mid), self.tone, p, 3.5)
+        text_left = 12.0
         right = self.width() - 12
         if self.annotation:
             font = meta_font(self._theme)
@@ -372,11 +568,13 @@ class SyncSummary(QWidget):
             )
             right -= width + 10
         painter.setFont(self.font())
-        painter.setPen(QColor(p.text_secondary))
+        painter.setPen(self.text_color())
         painter.drawText(
-            QRectF(34, 0, max(0, right - 34), self.height()),
+            QRectF(text_left, 0, max(0.0, right - text_left), self.height()),
             int(Qt.AlignmentFlag.AlignVCenter),
-            self.fontMetrics().elidedText(self.text, Qt.TextElideMode.ElideRight, max(0, right - 34)),
+            self.fontMetrics().elidedText(
+                self.text, Qt.TextElideMode.ElideRight, int(max(0.0, right - text_left))
+            ),
         )
 
 
@@ -457,6 +655,7 @@ class Sidebar(QWidget):
         self.tree.expanded.connect(self._on_expanded)
         self.tree.collapsed.connect(self._on_collapsed)
         self.tree.activated.connect(self._on_activated)
+        self.tree.clicked.connect(self._on_activated)
         self.tree.new_note_in.connect(self.new_note_requested.emit)
         tree_box = QVBoxLayout()
         tree_box.setContentsMargins(s.xs, 0, 0, 0)
@@ -472,6 +671,10 @@ class Sidebar(QWidget):
         self.summary = SyncSummary(theme)
         layout.addWidget(self.summary)
         self.apply_theme(theme)
+
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+        if not SlideOut.take(self, visible):
+            super().setVisible(visible)
 
     def apply_theme(self, theme: Theme) -> None:
         self._theme = theme

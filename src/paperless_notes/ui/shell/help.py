@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from paperless_notes.ui.shell.flow import FlowLayout
+from paperless_notes.ui.shell.motion import SlideOut, fade_in
 from paperless_notes.ui.shell.widgets import FloatingPanel
 from paperless_notes.ui.theme.icons import glyph_icon
 from paperless_notes.ui.theme.tokens import Theme
@@ -35,10 +36,10 @@ SECTIONS: tuple[tuple[str, str], ...] = (
     ),
     (
         "Home",
-        "Home appears when no note is open, and from the Home button in the sidebar or the logo in the top "
-        "bar (Alt+Home). It shows notes to continue, the notes that changed most recently in your library on "
-        "any PC, pinned notes, your most used tags and your library folders. Open tabs stay open while Home "
-        "is shown; choose a tab to return to it.",
+        "Home appears when no note is open, and from the Home button in the sidebar (Alt+Home). It shows "
+        "notes to continue, the notes that changed most recently in your library on any PC, pinned notes, "
+        "your most used tags and your library folders. Open tabs stay open while Home is shown; choose a tab "
+        "to return to it.",
     ),
     (
         "Files",
@@ -173,12 +174,16 @@ class HelpPanel(QFrame):
         p = theme.palette
         self.close_button.setIcon(glyph_icon("close", p.text_secondary, p.text))
 
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+        if not SlideOut.take(self, visible):
+            super().setVisible(visible)
+
     def close_panel(self) -> None:
         self.hide()
         self.closed.emit()
 
     def toggle(self) -> None:
-        if self.isVisible():
+        if SlideOut.is_open(self):
             self.close_panel()
         else:
             self.show()
@@ -266,6 +271,7 @@ class HintBubble(FloatingPanel):
         self.move(x, y)
         self.show()
         self.raise_()
+        fade_in(self, self._theme.ms(self._theme.motion.normal_ms), rise=6)
 
     def _dismiss(self) -> None:
         if self.hint is not None:

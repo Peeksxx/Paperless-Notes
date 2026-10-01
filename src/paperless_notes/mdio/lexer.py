@@ -78,6 +78,7 @@ _ATX_CLOSE = re.compile(r"[ \t]+#+[ \t]*$")
 _FENCE = re.compile(r"( {0,3})(`{3,}|~{3,})(.*)$")
 _RULE = re.compile(r" {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 _SETEXT = re.compile(r" {0,3}(=+|-+)[ \t]*$")
+_YAML_KEY = re.compile(r"[A-Za-z0-9_][\w .-]*:(\s|$)")
 _LIST = re.compile(r"( *)([-+*]|\d{1,9}[.)])([ \t]+|$)")
 _TASK = re.compile(r"\[([ xX])\](?=[ \t]|$)")
 _TABLE_DELIM = re.compile(r" {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$")
@@ -136,7 +137,7 @@ def lex_line(
         return LineResult([Span(0, end + 3, Style.HTML), *rest], State.NORMAL)
     if _is_plain(line, next_line):
         return _PLAIN
-    if first_line and line.rstrip() == "---":
+    if first_line and line.rstrip() == "---" and next_line is not None and _YAML_KEY.match(next_line):
         return LineResult([Span(0, len(line), Style.META | Style.MARKER)], State.FRONT_MATTER)
     m = _FENCE.match(line)
     if m and not (m.group(2)[0] == "`" and "`" in m.group(3)):

@@ -10,13 +10,17 @@ account.
 Paperless Notes is made by [@peeksxx](https://peeksxx.dev). It is source available, not open source.
 See [LICENSE](LICENSE) for the terms.
 
+![Home, with notes to continue, recent changes, pinned notes and tags](docs/images/home-light.png)
+
+![A note in the dark theme, styled as you type](docs/images/note-dark.png)
+
 ## Download
 
-Paperless Notes 4.2.0 supports 64-bit Windows 10 and Windows 11.
+Paperless Notes 4.3.0 supports 64-bit Windows 10 and Windows 11.
 
-- [Download the Windows installer](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.2.0/Paperless-Notes-4.2.0-setup.exe)
-- [Download the portable ZIP](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.2.0/Paperless-Notes-4.2.0-portable-win64.zip)
-- [View checksums and release notes](https://github.com/Peeksxx/Paperless-Notes/releases/tag/v4.2.0)
+- [Download the Windows installer](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.3.0/Paperless-Notes-4.3.0-setup.exe)
+- [Download the portable ZIP](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.3.0/Paperless-Notes-4.3.0-portable-win64.zip)
+- [View checksums and release notes](https://github.com/Peeksxx/Paperless-Notes/releases/tag/v4.3.0)
 
 The installer is per-user, needs no administrator access, and installs the program to
 `%LOCALAPPDATA%\Programs\Paperless Notes`. Desktop and **Open with** integration are optional and off
@@ -31,6 +35,9 @@ the SHA-256 value matches `SHA256SUMS.txt` before choosing **More info**, then *
 - Live Markdown styling for headings, emphasis, lists, tasks, quotes, code, tables, links, and images.
 - Insert and Format tools, `/` commands, selection formatting, smart lists, task counts, and one-step
   undo for authoring commands.
+- Built-in English spell checking with in-place corrections (Tab accepts, Esc keeps) and a personal
+  dictionary, all offline.
+- Emoji shortcodes such as `:skull:` with live suggestions as you type.
 - Automatic and manual saving through an atomic same-folder replacement, preserving encoding and line
   endings.
 - Crash recovery journals and per-PC version history with compare and restore.
@@ -43,6 +50,7 @@ the SHA-256 value matches `SHA256SUMS.txt` before choosing **More info**, then *
 - Copy as Markdown or rich text. Pasted images are validated and stored in an `assets` folder beside
   the note.
 - Light and dark themes, interface scaling, keyboard navigation, and graphite as the default accent.
+- Short, quiet animations for panels, tabs, messages and Home, all off with Reduce motion.
 
 ## Where files are stored
 
@@ -148,7 +156,7 @@ Every shortcut also has a visible button or menu item. Press F1 for the built-in
 
 ## Current limitations
 
-- Windows only, and the 4.2.0 binaries are not code-signed.
+- Windows only, and the 4.3.0 binaries are not code-signed.
 - Notes above 512 KB open without live styling. Files above 10 MB are not opened for editing.
 - Search skips note contents above 2 MB and online-only files. Their names can still appear.
 - Search does not match part of a word in scripts commonly written without spaces, including Chinese
@@ -157,7 +165,7 @@ Every shortcut also has a visible button or menu item. Press F1 for the built-in
 - Moving a note does not move its `assets` images, and unused images are not removed automatically.
 - Split view supports two panes. Caret-line styling follows the pane used most recently.
 - Export omits front matter and HTML comments. PDF export uses the light theme.
-- There is no spell checker. Screen readers read the Markdown source and its punctuation.
+- Spell checking is English only. Screen readers read the Markdown source and its punctuation.
 - Upload status depends on the OneDrive signal reported on the current PC.
 
 ## Moving from Paperless Notes 3
@@ -171,8 +179,8 @@ files, choose **Add folder** and select their existing folder.
 Download `SHA256SUMS.txt` from the release, then run:
 
 ```powershell
-Get-FileHash .\Paperless-Notes-4.2.0-setup.exe -Algorithm SHA256
-Get-FileHash .\Paperless-Notes-4.2.0-portable-win64.zip -Algorithm SHA256
+Get-FileHash .\Paperless-Notes-4.3.0-setup.exe -Algorithm SHA256
+Get-FileHash .\Paperless-Notes-4.3.0-portable-win64.zip -Algorithm SHA256
 ```
 
 Compare the output with the matching entries in `SHA256SUMS.txt`.
@@ -195,10 +203,10 @@ onedir application, verifies its contents, creates the portable ZIP and installe
 
 ## Verification status
 
-The 4.2.0 source passed:
+The 4.3.0 source passed:
 
 - Text hygiene, Ruff lint and formatting, and strict mypy checks.
-- 1,231 functional tests with 91.60 percent coverage.
+- 1,272 functional tests with 92.05 percent coverage.
 - 44 untraced timing and memory tests.
 - 5,300 generated sync worlds and mutation checks.
 - Layout checks at 100, 125, 150 and 200 percent in both themes, at 1365 by 900 and 720 by 480.

@@ -329,7 +329,8 @@ def _blank(block: QTextBlock) -> bool:
 
 
 def insert_rule(cursor: QTextCursor) -> EditResult:
-    """A thematic break on its own line, with a blank line above so it never becomes a heading."""
+    """A thematic break on its own line, with a blank line above so it never becomes a heading. The caret
+    moves to the line below, so the rule is drawn at once."""
     block = cursor.document().findBlock(cursor.selectionEnd())
     if in_raw_region(block):
         return refuse(IN_CODE)
@@ -339,11 +340,17 @@ def insert_rule(cursor: QTextCursor) -> EditResult:
             previous = block.previous()
             prefix = "\n" if previous.isValid() and not _blank(previous) else ""
             replace_text(document, block.position(), block.position() + block.length() - 1, prefix + "---")
-            end = block.position() + len(prefix) + 3
+            rule_end = block.position() + len(prefix) + 3
         else:
-            at = block.position() + block.length() - 1
-            insert_text(document, at, "\n\n---")
-            end = at + 5
+            rule_end = block.position() + block.length() - 1
+            insert_text(document, rule_end, "\n\n---")
+            rule_end += 5
+        after = document.findBlock(rule_end).next()
+        if after.isValid() and _blank(after):
+            end = after.position()
+        else:
+            insert_text(document, rule_end, "\n")
+            end = rule_end + 1
     return done(end)
 
 

@@ -51,7 +51,11 @@ REQUIRED_LEGAL = (
     "licenses/Python-3.13.txt",
     "licenses/Apache-2.0.txt",
     "licenses/Qt-Third-Party.txt",
+    "licenses/ESDB-Word-List.txt",
+    "licenses/gemoji-MIT.txt",
 )
+# Data the spell checker and emoji suggestions read at run time; the spec bundles the whole folder.
+REQUIRED_DATA = ("_internal/paperless_notes/data/words.txt.gz", "_internal/paperless_notes/data/emoji.tsv")
 LEGAL_FILES = (*REQUIRED_LEGAL, "README.md", "CHANGELOG.md")
 WATCHED_TREES = ("src", "tests", "docs", "tools", "packaging", "assets", "licenses")
 ZIP_DATE = (2026, 1, 1, 0, 0, 0)
@@ -387,6 +391,9 @@ def verify(
     for rel in REQUIRED_LEGAL:
         if not (app_dir / rel).is_file():
             result.problems.append(f"required legal file missing: {rel}")
+    for rel in REQUIRED_DATA:
+        if not (app_dir / rel).is_file():
+            result.problems.append(f"bundled data missing: {rel}")
     internal = app_dir / "_internal"
     if not internal.is_dir():
         result.problems.append("the _internal folder is missing (not a onedir build)")

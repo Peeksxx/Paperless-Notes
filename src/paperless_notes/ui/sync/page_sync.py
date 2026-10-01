@@ -18,6 +18,7 @@ from paperless_notes.core.session import ConflictInfo, NoteSession, ReloadInfo, 
 from paperless_notes.core.syncmonitor import SyncState
 from paperless_notes.ui.editor.note_editor import NoteEditor
 from paperless_notes.ui.shell.flow import FlowLayout
+from paperless_notes.ui.shell.motion import SlideOut
 from paperless_notes.ui.sync.banner import DiagnosisBanner, shows_banner
 from paperless_notes.ui.sync.marks import change_marks, model_mapper
 from paperless_notes.ui.theme.tokens import Theme
@@ -202,6 +203,7 @@ class SyncPresenter(QObject):
         self.hooks = hooks
         self.banner: DiagnosisBanner | None = None
         self.draft_bar: DraftBar | None = None
+        self._boxes: dict[QWidget, SlideOut] = {}
         self._connections: list[QMetaObject.Connection] = [
             session.diagnosis_changed.connect(self._on_diagnosis),
             session.sync_status_changed.connect(self._refresh),
@@ -226,7 +228,7 @@ class SyncPresenter(QObject):
         self.theme = theme
         diagnosis = self.banner.diagnosis if self.banner is not None else None
         self._remove_banner()
-        self._on_diagnosis(diagnosis)
+        self._show_banner(diagnosis, animate=False)
 
     def _refresh(self, *_args: Any) -> None:
         text, state = sync_line(self.session)
@@ -240,6 +242,9 @@ class SyncPresenter(QObject):
         self.changed.emit()
 
     def _on_diagnosis(self, diagnosis: Diagnosis | None) -> None:
+        self._show_banner(diagnosis, animate=True)
+
+    def _show_banner(self, diagnosis: Diagnosis | None, animate: bool) -> None:
         if not shows_banner(diagnosis) or diagnosis is None:
             self._remove_banner()
             return
@@ -249,14 +254,28 @@ class SyncPresenter(QObject):
         self._remove_banner()
         banner = DiagnosisBanner(diagnosis, self.theme)
         banner.action_triggered.connect(self.trigger)
-        self.banners.insertWidget(0, banner)
+        self._slide_in(banner, 0, animate)
         self.banner = banner
         self.changed.emit()
 
+    def _slide_in(self, bar: QWidget, index: int, animate: bool) -> None:
+        """Add a bar to the banner area; it slides down into place unless ``animate`` is off."""
+        bar.hide()
+        theme = self.theme
+        box = SlideOut(bar, Qt.Edge.TopEdge, lambda: theme.ms(theme.motion.normal_ms) if animate else 0)
+        self._boxes[bar] = box
+        self.banners.insertWidget(index, box)
+        box.set_open(True)
+
+    def _take_out(self, bar: QWidget) -> None:
+        box = self._boxes.pop(bar, None)
+        if box is not None:
+            self.banners.removeWidget(box)
+            box.deleteLater()
+
     def _remove_banner(self) -> None:
         if self.banner is not None:
-            self.banners.removeWidget(self.banner)
-            self.banner.deleteLater()
+            self._take_out(self.banner)
             self.banner = None
 
     def trigger(self, diagnosis: Diagnosis, action: Action) -> bool:
@@ -319,13 +338,12 @@ class SyncPresenter(QObject):
         bar.recover_button.clicked.connect(self.recover_draft)
         bar.compare_button.clicked.connect(self.compare_draft)
         bar.discard_button.clicked.connect(self.discard_draft)
-        self.banners.addWidget(bar)
+        self._slide_in(bar, -1, animate=True)
         self.draft_bar = bar
 
     def _remove_draft_bar(self) -> None:
         if self.draft_bar is not None:
-            self.banners.removeWidget(self.draft_bar)
-            self.draft_bar.deleteLater()
+            self._take_out(self.draft_bar)
             self.draft_bar = None
 
     def recover_draft(self) -> None:

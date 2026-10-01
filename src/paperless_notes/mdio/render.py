@@ -470,8 +470,10 @@ def _list_html(block: Block, policy: RenderPolicy) -> str:
     for item in block.items:
         body = blocks_html(item.blocks, policy, tight=True)
         if item.task is not None:
-            box = _CHECKED if item.task else _BOX
-            items.append(f'<li class="task">{box} {body}</li>')
+            if item.task:
+                items.append(f'<li class="task">{_CHECKED} <span class="done">{body}</span></li>')
+            else:
+                items.append(f'<li class="task">{_BOX} {body}</li>')
         else:
             items.append(f"<li>{body}</li>")
     return f"<{tag}{start}>\n" + "\n".join(items) + f"\n</{tag}>"

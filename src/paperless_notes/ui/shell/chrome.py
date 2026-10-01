@@ -15,7 +15,15 @@ from ctypes import wintypes
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor, QMouseEvent, QResizeEvent, QShowEvent
-from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QMenu, QSizePolicy, QWidget
+from PySide6.QtWidgets import (
+    QAbstractButton,
+    QApplication,
+    QFrame,
+    QHBoxLayout,
+    QMenu,
+    QSizePolicy,
+    QWidget,
+)
 
 from paperless_notes.ui.shell.topbar import Breadcrumbs, SearchBox, crumbs_for, icon_button
 from paperless_notes.ui.shell.widgets import CaptionButton
@@ -43,6 +51,10 @@ WM_NCLBUTTONDOWN = 0x00A1
 WM_NCLBUTTONUP = 0x00A2
 WM_NCLBUTTONDBLCLK = 0x00A3
 WM_NCMOUSELEAVE = 0x02A2
+HTCAPTION = 2
+HTTOP = 12
+HTTOPLEFT = 13
+HTTOPRIGHT = 14
 HTMAXBUTTON = 9
 _GWL_STYLE = -16
 _WS_THICKFRAME = 0x00040000
@@ -176,42 +188,62 @@ def _signed_words(value: int) -> tuple[int, int]:
     return ctypes.c_short(value & 0xFFFF).value, ctypes.c_short((value >> 16) & 0xFFFF).value
 
 
-class MaximizeHitTest(QObject):
-    """Reports the painted maximize button to Windows as the window's maximize button, so hovering it opens
-    the Snap Layouts flyout on Windows 11. Windows then sends the button's hover and clicks as non-client
-    messages, which are passed on to the button here."""
+class TitleBarHitTest(QObject):
+    """Tells Windows what each point of the painted title bar is. Empty parts are the caption, so dragging
+    is the system's own move (snapping, and a maximized window returning to its normal size under the
+    pointer), a double click maximizes and a right click opens the window menu. The top edge resizes, and
+    the painted maximize button is the window's maximize button, so hovering it opens Snap Layouts on
+    Windows 11; its hover and clicks arrive as non-client messages and are passed on to the button.
+    Buttons and the search box stay ordinary controls."""
 
     POLL_MS = 40
 
     def __init__(
         self,
         window: QWidget,
-        button: CaptionButton,
+        bar: AppBar,
         to_client: Callable[[QWidget, int, int], QPointF | None] = screen_to_client,
     ) -> None:
         super().__init__(window)
         self._window = window
-        self._button = button
+        self._bar = bar
+        self._button = bar.maximize_button
         self._to_client = to_client
         self._poll = QTimer(self)
         self._poll.setInterval(self.POLL_MS)
         self._poll.timeout.connect(self._check_pointer)
 
-    def over_button(self, x: int, y: int) -> bool:
-        if not self._button.isVisible() or not self._button.isEnabled():
-            return False
+    def hit(self, x: int, y: int) -> int | None:
+        """The hit-test code for a physical screen point, or None where Qt handles the point itself."""
         point = self._to_client(self._window, x, y)
-        if point is None:
-            return False
-        local = self._button.mapFrom(self._window, point.toPoint())
-        return self._button.rect().contains(local)
+        if point is None or not self._bar.isVisible():
+            return None
+        local = self._bar.mapFrom(self._window, point.toPoint())
+        if not self._bar.rect().contains(local):
+            return None
+        button = self._button
+        on_button = button.rect().contains(button.mapFrom(self._bar, local))
+        if on_button and button.isVisible() and button.isEnabled():
+            return HTMAXBUTTON
+        if not self._window.isMaximized() and local.y() < RESIZE_BORDER:
+            if local.x() < RESIZE_BORDER:
+                return HTTOPLEFT
+            if local.x() >= self._bar.width() - RESIZE_BORDER:
+                return HTTOPRIGHT
+            return HTTOP
+        child = self._bar.childAt(local)
+        while child is not None and child is not self._bar:
+            if isinstance(child, QAbstractButton):
+                return None
+            child = child.parentWidget()
+        return HTCAPTION
 
     def handle(self, message: int) -> int | None:
         """The result for a native message that concerns the maximize button, or None to let Qt handle it."""
         msg = wintypes.MSG.from_address(message)
         kind = msg.message
         if kind == WM_NCHITTEST:
-            return HTMAXBUTTON if self.over_button(*_signed_words(msg.lParam)) else None
+            return self.hit(*_signed_words(msg.lParam))
         if kind == WM_NCMOUSELEAVE:
             self._release()
             return None
@@ -264,10 +296,9 @@ class PopupRounder(QObject):
 
 
 class AppBar(QWidget):
-    """Home, sidebar, back and forward, breadcrumbs, the search box (centred on the window), history, help,
+    """Sidebar, back and forward, breadcrumbs, the search box (centred on the window), history, help,
     settings and the caption buttons. Empty space drags the window; a double click maximizes."""
 
-    home_requested = Signal()
     sidebar_toggled = Signal()
     back_requested = Signal()
     forward_requested = Signal()
@@ -285,6 +316,7 @@ class AppBar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._window = window
         self._native = native_frame
+        self._grab: QPointF | None = None
         self._theme = theme
         self.setFixedHeight(theme.metrics.title_bar)
         s = theme.spacing
@@ -295,12 +327,10 @@ class AppBar(QWidget):
         left = QHBoxLayout(self.left)
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(s.xxs)
-        self.home_button = icon_button("Home", "Home: recent notes, changes and tags (Alt+Home)")
         self.sidebar_button = icon_button("Sidebar", "Show or hide the sidebar (Ctrl+\\)")
         self.back_button = icon_button("Back", "Back to the previous note (Alt+Left)")
         self.forward_button = icon_button("Forward", "Forward (Alt+Right)")
         for button, signal in (
-            (self.home_button, self.home_requested),
             (self.sidebar_button, self.sidebar_toggled),
             (self.back_button, self.back_requested),
             (self.forward_button, self.forward_requested),
@@ -361,7 +391,6 @@ class AppBar(QWidget):
         self._theme = theme
         p = theme.palette
         for button, name in (
-            (self.home_button, "logo"),
             (self.sidebar_button, "sidebar"),
             (self.back_button, "back"),
             (self.forward_button, "forward"),
@@ -397,8 +426,7 @@ class AppBar(QWidget):
         m = self._theme.metrics
         right_edge = width - self.right.sizeHint().width() - 12
         fixed_left = self.layout().contentsMargins().left() + sum(  # type: ignore[union-attr]
-            b.sizeHint().width() + 2
-            for b in (self.home_button, self.sidebar_button, self.back_button, self.forward_button)
+            b.sizeHint().width() + 2 for b in (self.sidebar_button, self.back_button, self.forward_button)
         )
         box = max(160, min(560, round(width * 0.34)))
         x = (width - box) // 2
@@ -420,11 +448,41 @@ class AppBar(QWidget):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
         if event.button() == Qt.MouseButton.LeftButton and not self._native:
+            if self._window.isMaximized():
+                self._grab = event.position()
+                event.accept()
+                return
             handle = self._window.windowHandle()
             if handle is not None and handle.startSystemMove():
                 event.accept()
                 return
         super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+        grab = self._grab
+        if grab is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            if (event.position() - grab).manhattanLength() >= QApplication.startDragDistance():
+                self._grab = None
+                self.restore_under_pointer(grab, event.globalPosition())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+        self._grab = None
+        super().mouseReleaseEvent(event)
+
+    def restore_under_pointer(self, grab: QPointF, pointer: QPointF) -> None:
+        """Leave the maximized state the way Windows does when a title bar is dragged: the window returns to
+        its normal size with the pointer at the same place along the bar, and the move continues."""
+        ratio = min(1.0, max(0.0, grab.x() / max(1, self.width())))
+        normal = self._window.normalGeometry()
+        self._window.showNormal()
+        width = normal.width() if normal.isValid() and normal.width() > 0 else self._window.width()
+        self._window.move(round(pointer.x() - ratio * width), round(pointer.y() - grab.y()))
+        handle = self._window.windowHandle()
+        if handle is not None:
+            handle.startSystemMove()
 
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
         if event.button() == Qt.MouseButton.LeftButton and not self._native:

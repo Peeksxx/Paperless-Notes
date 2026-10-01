@@ -1,6 +1,6 @@
 # Third-party notices
 
-Paperless Notes 4.2.0 for Windows ships the components below. Each keeps its own license; the
+Paperless Notes 4.3.0 for Windows ships the components below. Each keeps its own license; the
 Paperless Notes license (`LICENSE`) does not change or limit these terms. The full license texts are in
 the `licenses` folder next to `Paperless Notes.exe` and in the source repository.
 
@@ -92,6 +92,24 @@ Microsoft's redistribution terms for that runtime.
   Version 2.0 (full text in `licenses/Apache-2.0.txt`).
 - https://github.com/pyinstaller/pyinstaller/blob/v6.16.0/COPYING.txt
 
+## English word list (spell checking)
+
+The spell checker's word list (`_internal\paperless_notes\data\words.txt.gz`) is built from the English
+Speller Database (ESDB, previously SCOWL).
+
+- Copyright 2000-2026 by Kevin Atkinson; Australian English data copyright 2016 by Benjamin Titze.
+- Permission to use, copy, modify, distribute and sell the database and word lists created from it, with
+  the copyright and permission notices kept; full notice in `licenses/ESDB-Word-List.txt`.
+- https://wordlist.aspell.net
+
+## Emoji names (shortcodes)
+
+The `:shortcode:` names (`_internal\paperless_notes\data\emoji.tsv`) come from gemoji.
+
+- Copyright (c) 2019 GitHub, Inc.
+- MIT License; full text in `licenses/gemoji-MIT.txt`.
+- https://github.com/github/gemoji
+
 ## License texts in this release
 
 | File | License |
@@ -101,6 +119,8 @@ Microsoft's redistribution terms for that runtime.
 | `licenses/Python-3.13.txt` | Python Software Foundation License Version 2, with bundled-library notices |
 | `licenses/Apache-2.0.txt` | Apache License, Version 2.0 (terms and conditions) |
 | `licenses/Qt-Third-Party.txt` | License texts and notices for code embedded in the shipped Qt binaries |
+| `licenses/ESDB-Word-List.txt` | Copyright and permission notice of the English Speller Database |
+| `licenses/gemoji-MIT.txt` | MIT License of the gemoji emoji names |
 
 The GNU and Apache texts are the standard published texts; the Python text is the `LICENSE.txt` of the
 Python 3.13.7 Windows distribution used for the build.

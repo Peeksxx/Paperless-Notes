@@ -49,7 +49,9 @@ QToolButton#TabClose {{
 }}
 QToolButton#TabClose:hover {{ background: {p.selected}; }}
 QToolButton#StripButton {{ min-width: {m.hit_min}px; min-height: {m.hit_min}px; padding: 0; }}
-QTabBar QToolButton {{ background: {p.window}; border: none; }}
+QTabBar QToolButton {{ background: {p.window}; border: none; border-radius: {r.sm}px; }}
+QTabBar QToolButton:hover {{ background: {p.hover}; }}
+QTabBar::tear {{ width: 0px; border: none; }}
 
 #PageHeader, QScrollArea#PageHeaderScroll {{ background: {p.page}; border: none; }}
 QPlainTextEdit#TitleField {{

@@ -8,8 +8,10 @@ quote marks, rules) keep their width but become transparent so the editor can pa
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -19,15 +21,50 @@ from PySide6.QtGui import (
     QTextDocument,
 )
 
-from paperless_notes.mdio.lexer import LineResult, Span, State, Style, flatten, lex_line
+from paperless_notes.mdio.lexer import (
+    LineResult,
+    Span,
+    State,
+    Style,
+    flatten,
+    is_blank,
+    is_setext_underline,
+    lex_line,
+)
 
 HEADING_SCALE = (1.0, 1.6, 1.35, 1.2, 1.1, 1.0, 1.0)
 _KEEP_LINE = Style.TABLE | Style.CODE_BLOCK | Style.META
 _KEEP_SPAN = Style.HTML | Style.HARD_BREAK | Style.FOOTNOTE | Style.LINK | Style.TABLE | Style.META
+SPELL_SKIP = Style.CODE | Style.CODE_BLOCK | Style.URL | Style.HTML | Style.META | Style.FOOTNOTE
 _TRANSPARENT = QColor(0, 0, 0, 0)
 _ID_SHIFT = 12
 _LEXER_MASK = (1 << _ID_SHIFT) - 1
 _MAX_ID = (1 << (31 - _ID_SHIFT)) - 1
+
+
+SpellCheck = Callable[[str, list[tuple[int, int]]], list[tuple[int, int]]]
+
+
+def utf16_offsets(text: str) -> list[int] | None:
+    """Document offsets (UTF-16 code units) of every Python index of ``text`` and its end, or None when
+    they are the same: only characters outside the Basic Multilingual Plane, such as most emoji, take two
+    units."""
+    if text.isascii() or max(text) <= "\uffff":
+        return None
+    offsets = [0]
+    for ch in text:
+        offsets.append(offsets[-1] + (2 if ch > "\uffff" else 1))
+    return offsets
+
+
+def _decor_in_units(decor: BlockDecor, units: list[int]) -> BlockDecor:
+    return replace(
+        decor,
+        bullets=tuple(units[i] for i in decor.bullets),
+        tasks=tuple((units[i], checked) for i, checked in decor.tasks),
+        quotes=tuple(units[i] for i in decor.quotes),
+        concealed=tuple((units[a], units[b]) for a, b in decor.concealed),
+    )
 
 
 def lexer_state(state: int) -> int:
@@ -48,6 +85,7 @@ class HighlightTheme:
     base_point_size: float = 13.0
     body_families: tuple[str, ...] = ()
     mono_family: str = "Cascadia Mono"
+    spelling: str = "#e5484d"
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +128,9 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         self._decor: dict[int, tuple[int, BlockDecor]] = {}
         self._free: list[int] = []
         self._next_id = 1
+        self._spell: SpellCheck | None = None
+        self._caret = (-1, -1)
+        self._skipped_block = -1
 
     @property
     def theme(self) -> HighlightTheme:
@@ -115,6 +156,25 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         if conceal != self._conceal:
             self._conceal = conceal
             self.rehighlight()
+
+    def set_spelling(self, check: SpellCheck | None) -> None:
+        """Underline the words ``check`` reports as misspelled; None turns underlining off."""
+        self._spell = check
+        self.rehighlight()
+
+    def spelling_changed(self) -> None:
+        if self._spell is not None:
+            self.rehighlight()
+
+    def set_caret(self, block: int, column: int) -> None:
+        """The caret position. The word being typed at the caret is not underlined yet; when the caret
+        leaves it on the same line, the line is checked again."""
+        same_line = block == self._caret[0]
+        self._caret = (block, column)
+        if same_line and block == self._skipped_block:
+            found = self.document().findBlockByNumber(block)
+            if found.isValid():
+                self.rehighlightBlock(found)
 
     def set_active_block(self, number: int) -> None:
         """The caret line shows its markers; only the old and new caret lines are re-styled."""
@@ -181,15 +241,68 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         )
         block_id = self._block_id()
         self.setCurrentBlockState(result.state | (block_id << _ID_SHIFT))
+        units = utf16_offsets(text)
         for start, end, style in flatten(result.spans, len(text)):
+            if units is not None:
+                start, end = units[start], units[end]
             self.setFormat(start, end - start, self._format(style, result.heading))
         decor = self._decorate(text, result)
+        if units is not None:
+            decor = _decor_in_units(decor, units)
         if self._conceal and block.blockNumber() != self._active:
-            self._apply_conceal(decor)
+            self._apply_conceal(decor, units[-1] if units is not None else len(text))
         else:
             decor = replace(decor, bullets=(), tasks=(), quotes=(), rule=False, concealed=())
         if block_id:
             self._decor[block_id] = (len(text), decor)
+        if self._spell is not None and result.state != State.FRONT_MATTER:
+            self._underline_misspelled(block.blockNumber(), text, result, units)
+        self._check_previous(block, text)
+
+    def _underline_misspelled(
+        self, number: int, text: str, result: LineResult, units: list[int] | None
+    ) -> None:
+        check = self._spell
+        if check is None:
+            return
+        skip = [(span.start, span.end) for span in result.spans if span.style & SPELL_SKIP]
+        ranges = check(text, skip)
+        if units is not None:
+            ranges = [(units[a], units[b]) for a, b in ranges]
+        caret_block, caret_column = self._caret
+        if number == caret_block:
+            kept = [(a, b) for a, b in ranges if not a < caret_column <= b]
+            if len(kept) != len(ranges):
+                self._skipped_block = number
+            ranges = kept
+        color = QColor(self._theme.spelling)
+        for start, end in ranges:
+            for position in range(start, end):
+                underlined = QTextCharFormat(self.format(position))
+                underlined.setUnderlineStyle(QTextCharFormat.UnderlineStyle.SpellCheckUnderline)
+                underlined.setUnderlineColor(color)
+                self.setFormat(position, 1, underlined)
+
+    def _check_previous(self, block: QTextBlock, text: str) -> None:
+        """Restyle the line above when this line changes its meaning: a ``---`` or ``===`` underline makes
+        it a heading, and the second line decides whether a first-line ``---`` opens front matter."""
+        previous = block.previous()
+        if not previous.isValid() or is_blank(previous.text()):
+            return
+        number = previous.blockNumber()
+        stored = self.decor_for(previous)
+        stored_heading = stored.heading if stored is not None else 0
+        if number != 0 and not is_setext_underline(text) and not stored_heading:
+            return
+        before = previous.previous()
+        state = lexer_state(before.userState()) if before.isValid() else State.NORMAL
+        expected = lex_line(previous.text(), state if state >= 0 else State.NORMAL, number == 0, text)
+        if expected.heading != stored_heading or expected.state != lexer_state(previous.userState()):
+            QTimer.singleShot(0, self, lambda target=previous: self._restyle(target))
+
+    def _restyle(self, block: QTextBlock) -> None:
+        if block.isValid():
+            self.rehighlightBlock(block)
 
     def _decorate(self, text: str, result: LineResult) -> BlockDecor:
         line_style = Style.NONE
@@ -253,7 +366,7 @@ class MarkdownHighlighter(QSyntaxHighlighter):
             return "quote"
         return "zero"
 
-    def _apply_conceal(self, decor: BlockDecor) -> None:
+    def _apply_conceal(self, decor: BlockDecor, length: int) -> None:
         zero = QTextCharFormat()
         zero.setFontPointSize(0.01)
         zero.setForeground(_TRANSPARENT)
@@ -268,7 +381,7 @@ class MarkdownHighlighter(QSyntaxHighlighter):
         if decor.rule:
             fmt = QTextCharFormat(self.format(0))
             fmt.setForeground(_TRANSPARENT)
-            self.setFormat(0, len(self.currentBlock().text()), fmt)
+            self.setFormat(0, length, fmt)
 
     def _format(self, bits: int, heading: int) -> QTextCharFormat:
         key = (bits, heading)

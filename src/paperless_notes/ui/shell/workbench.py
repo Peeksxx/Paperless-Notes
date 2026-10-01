@@ -9,7 +9,8 @@ import ntpath
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from PySide6.QtCore import QMetaObject, QObject, Qt, Signal
+from PySide6.QtCore import QEvent, QMetaObject, QObject, Qt, Signal
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -39,6 +40,7 @@ from paperless_notes.ui.shell.page import NotePage
 from paperless_notes.ui.shell.page_factory import PageFactory
 from paperless_notes.ui.shell.split import SplitView, safe_split_path
 from paperless_notes.ui.shell.tabs import TabOverflow, TabStrip
+from paperless_notes.ui.shell.transitions import fade_out, rise_in
 from paperless_notes.ui.sync.page_sync import SyncHooks
 from paperless_notes.ui.theme.icons import glyph_icon
 from paperless_notes.ui.theme.tokens import Theme
@@ -151,6 +153,7 @@ class Workbench(QWidget):
         self.strip_host.setObjectName("TabStripHost")
         self.strip_host.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.strip_host.setLayout(strip_row)
+        self.strip_host.installEventFilter(self)
         layout.addWidget(self.strip_host)
         self.stack = QStackedWidget()
         self.start = Dashboard(theme, synced)
@@ -213,6 +216,21 @@ class Workbench(QWidget):
             return None
         return self.current_page()
 
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
+        if watched is self.strip_host and event.type() == QEvent.Type.Resize:
+            self.fit_tabs()
+        return super().eventFilter(watched, event)
+
+    def fit_tabs(self) -> None:
+        """Give the tabs the room left beside the new-tab and all-tabs buttons."""
+        row = self.strip_host.layout()
+        if row is None:
+            return
+        margins = row.contentsMargins()
+        buttons = self.new_tab_button.sizeHint().width() + self.overflow.sizeHint().width()
+        spare = self.strip_host.width() - margins.left() - margins.right() - buttons - 3 * row.spacing()
+        self.strip.set_available(max(0, spare - self._theme.spacing.md))
+
     def home_visible(self) -> bool:
         return self.stack.currentWidget() is self.start
 
@@ -222,13 +240,22 @@ class Workbench(QWidget):
             page = self.current_page()
             if page is not None:
                 page.session.flush(FlushReason.TAB_SWITCH)
+        before = self._snapshot() if not self.home_visible() else None
         self._home = bool(self._tabs)
         self.strip.set_home(self._home)
         self.stack.setCurrentWidget(self.start)
         self.start.set_notes(self.pinned_paths(), self._local.recent_notes())
+        if before is not None:
+            rise_in(self.stack, before, self.stack.grab(), self.start.section_tops(self.stack))
         self.home_changed.emit(True)
         self.current_changed.emit(None)
         self.active_changed.emit()
+
+    def _snapshot(self) -> QPixmap | None:
+        """A picture of the current view for a transition; None when motion is reduced or nothing shows."""
+        if self._theme.reduced_motion or not self.stack.isVisible():
+            return None
+        return self.stack.grab()
 
     def leave_home(self) -> None:
         index = self.strip.currentIndex()
@@ -334,6 +361,7 @@ class Workbench(QWidget):
             if i != index and tab.session is not None and tab.page is not None and tab.page.isVisible():
                 tab.session.flush(FlushReason.TAB_SWITCH)
         was_home = self._home
+        before = self._snapshot() if self.home_visible() else None
         self._home = False
         self.strip.set_home(False)
         if 0 <= index < len(self._tabs):
@@ -341,6 +369,8 @@ class Workbench(QWidget):
             self._ensure_open(tab)
             if tab.page is not None:
                 self.stack.setCurrentWidget(tab.page)
+                if before is not None:
+                    fade_out(self.stack, before, self._theme.ms(self._theme.motion.normal_ms))
             self.history.activated(tab.path)
             if not self._navigating:
                 self.navigation.visit(tab.path)

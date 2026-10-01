@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QLabel, QListWidget, QListWidgetItem, QToolButton, QVBoxLayout, QWidget
 
 from paperless_notes.mdio.outline import Outline
+from paperless_notes.ui.shell.motion import SlideOut
 from paperless_notes.ui.shell.widgets import SectionLabel
 from paperless_notes.ui.theme.icons import glyph_icon
 from paperless_notes.ui.theme.tokens import Theme
@@ -86,15 +87,19 @@ class ToolPanel(QFrame):
         self.apply_theme(theme)
         self.hide()
 
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+        if not SlideOut.take(self, visible):
+            super().setVisible(visible)
+
     def current(self) -> str:
-        return "outline" if self.isVisible() else ""
+        return "outline" if SlideOut.is_open(self) else ""
 
     def show_page(self, _name: str = "outline") -> None:
         self.show()
         self.outline.list.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def toggle(self) -> None:
-        if self.isVisible():
+        if SlideOut.is_open(self):
             self.close_panel()
         else:
             self.show_page()

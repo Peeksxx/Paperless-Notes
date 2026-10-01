@@ -76,6 +76,8 @@ class SettingsDialog(QDialog):
         self.native_frame.setChecked(not settings.custom_frame)
         self.reduced_motion = QCheckBox("Reduce motion")
         self.reduced_motion.setChecked(settings.reduced_motion)
+        self.spelling = QCheckBox("Check spelling")
+        self.spelling.setChecked(settings.check_spelling)
         self.hints = QCheckBox("Show first-run tips")
         self.hints.setChecked(settings.show_hints)
         self.reset_hints = QPushButton("Show tips again")
@@ -96,6 +98,7 @@ class SettingsDialog(QDialog):
         form.addRow("Window", self.native_frame)
         form.addRow("", self._note(RESTART))
         form.addRow("Motion", self.reduced_motion)
+        form.addRow("Spelling", self.spelling)
         hints_row = QHBoxLayout()
         hints_row.addWidget(self.hints)
         hints_row.addWidget(self.reset_hints)
@@ -138,6 +141,7 @@ class SettingsDialog(QDialog):
             history_max_mb=self.history_mb.value(),
             custom_frame=not self.native_frame.isChecked(),
             reduced_motion=self.reduced_motion.isChecked(),
+            check_spelling=self.spelling.isChecked(),
             show_hints=self.hints.isChecked(),
             dismissed_hints=self._dismissed,
         )

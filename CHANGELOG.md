@@ -1,5 +1,54 @@
 # Changelog
 
+## 4.3.0 (2026-10-01)
+
+### Writing
+- Built-in spell checking that runs entirely in the app, with no Windows service and no network. Unknown
+  words outside code, links, tags, HTML and front matter get a wavy underline. When a misspelled word is
+  finished, its likely correction appears in its place in faded text: Tab accepts it, Esc keeps what you
+  typed, and a small bar offers Accept, Keep and Add to dictionary. Right-click a word for up to five
+  suggestions. The personal dictionary is kept with the local settings. Settings, Spelling, Check
+  spelling turns it off.
+- Emoji shortcodes: type a colon and two letters (for example `:sk`) for a list of matching emoji. Tab
+  or Enter inserts the highlighted one, the arrow keys move through the list and Esc closes it. Typing
+  the closing colon (`:skull:`) replaces the code at once. Shortcodes are not offered in code, links or
+  front matter.
+- A horizontal rule (`---`) draws as a rule. A `---` on the first line opens front matter only when the
+  next line looks like `key:`. Insert, Horizontal rule leaves the caret on a new line below the rule.
+
+### Interface
+- Motion throughout: messages slide up from the bottom, the sidebar and the outline and help panels slide
+  in and out, the find bar and the sync banners slide down, Home's sections rise into place, a note fades
+  in when you leave Home, the marker on the active tab slides to the next tab, library folders unroll,
+  tips fade in, and hover highlights fade. Settings, Motion, Reduce motion turns every animation off.
+- Tabs share their width like a browser: they shrink as tabs are added, grow as tabs close, and a new
+  tab grows in. A single tab no longer leaves a large gap before the New tab button. Close buttons show
+  on the active and hovered tabs.
+- Dragging the top bar of a maximized window restores it under the pointer, so it can be moved and
+  resized again.
+- The logo button at the far left of the top bar is removed. Home stays in the sidebar, on Alt+Home and
+  in the search palette.
+- A single click opens a note in the library, and a single click on a folder opens or closes it.
+- Library highlights start at the row's own level, so the folder guide lines no longer run through
+  them, and folders open without the jump that followed the Loading row.
+- The status dots are removed. "Saved" and "All open notes saved" change colour instead: amber while
+  saving, red when a note needs attention.
+- Pinned tabs show their whole name when it fits.
+
+### Export
+- HTML and PDF exports follow the editor: the note's typeface at regular weight (PDFs were all bold),
+  natural line spacing instead of 1.5, the editor's heading sizes, italic quotes with a bar (in PDFs
+  too), and done tasks struck through.
+
+### Fixed
+- Styling after an emoji, or any other character outside the Basic Multilingual Plane, landed one
+  character early.
+- A rare crash: Python's cycle collector could run on a background thread and free interface objects
+  there. Collection now runs only on the interface thread.
+
+### Upgrading from 4.2.0
+- Settings, open tabs, version history and the search index are kept. Spell checking is on by default.
+
 ## 4.2.0 (2026-09-30)
 
 ### Interface

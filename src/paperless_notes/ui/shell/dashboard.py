@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QEnterEvent, QFont, QFontMetrics, QPainter, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 from paperless_notes.core.search_index import NoteInfo, Overview
 from paperless_notes.ui.shell.flow import FlowLayout
 from paperless_notes.ui.shell.labels import day_group, location_of, note_title, relative_time
+from paperless_notes.ui.shell.motion import Glow, faded, mix
 from paperless_notes.ui.shell.widgets import (
     RowButton,
     SectionLabel,
@@ -74,6 +75,7 @@ class _Hoverable(QAbstractButton):
         super().__init__(parent)
         self._theme = theme
         self._hover = False
+        self._glow = Glow(self, lambda: self._theme.ms(self._theme.motion.fast_ms))
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
@@ -84,12 +86,12 @@ class _Hoverable(QAbstractButton):
 
     def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - Qt override
         self._hover = True
-        self.update()
+        self._glow.set_on(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event: object) -> None:  # noqa: N802 - Qt override
         self._hover = False
-        self.update()
+        self._glow.set_on(False)
         super().leaveEvent(event)  # type: ignore[arg-type]
 
     def _focus_ring(self, painter: QPainter, rect: QRectF, radius: float) -> None:
@@ -122,7 +124,7 @@ class NoteTile(_Hoverable):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        painter.setPen(QPen(QColor(p.border_strong if self._hover else p.border), 1))
+        painter.setPen(QPen(mix(p.border, p.border_strong, self._glow.amount), 1))
         painter.setBrush(QColor(p.hover if self.isDown() else p.surface if t.dark else p.window))
         painter.drawRoundedRect(rect, t.radius.lg, t.radius.lg)
         self._focus_ring(painter, rect, t.radius.lg)
@@ -192,13 +194,14 @@ class ChangeRow(_Hoverable):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         body = QRectF(self.rect()).adjusted(22, 1, 0, -1)
-        if self._hover or self.isDown():
+        glow = 1.0 if self.isDown() else self._glow.amount
+        if glow > 0:
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(p.hover))
+            painter.setBrush(faded(p.hover, glow))
             painter.drawRoundedRect(body, t.radius.md, t.radius.md)
         self._focus_ring(painter, body, t.radius.md)
         mid = self.height() / 2
-        painter.setPen(QPen(QColor(p.text if self._hover else p.text_muted), 1.5))
+        painter.setPen(QPen(mix(p.text_muted, p.text, glow), 1.5))
         painter.setBrush(QColor(p.page))
         painter.drawEllipse(QPointF(self.RAIL_X + 0.5, mid), 3.5, 3.5)
         meta = meta_font(t)
@@ -339,8 +342,9 @@ class TagChip(_Hoverable):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        painter.setPen(QPen(QColor(p.border_strong if self._hover else p.border), 1))
-        painter.setBrush(QColor(p.hover if self._hover else p.page))
+        glow = self._glow.amount
+        painter.setPen(QPen(mix(p.border, p.border_strong, glow), 1))
+        painter.setBrush(mix(p.page, p.hover, glow))
         painter.drawRoundedRect(rect, t.radius.sm, t.radius.sm)
         self._focus_ring(painter, rect, t.radius.sm)
         fm = self.fontMetrics()
@@ -560,6 +564,16 @@ class Dashboard(QScrollArea):
         now = time.time()
         self.date.setText(date_line(now).upper())
         self.heading.setText(greeting(time.localtime(now).tm_hour))
+
+    def section_tops(self, target: QWidget) -> list[int]:
+        """Where Home's sections start in ``target``'s coordinates: the heading block, Continue, and the
+        lower row, each with the space above it."""
+        gap = self._theme.spacing.xl
+        tops = [0]
+        for label in (self.continue_label, self.changes_label):
+            if label.isVisible():
+                tops.append(label.mapTo(target, QPoint(0, 0)).y() - gap)
+        return tops
 
     def apply_theme(self, theme: Theme) -> None:
         self._theme = theme

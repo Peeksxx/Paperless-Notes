@@ -49,6 +49,7 @@ class Settings:
     custom_frame: bool = True
     reduced_motion: bool = False
     show_hints: bool = True
+    check_spelling: bool = True
     dismissed_hints: tuple[str, ...] = field(default_factory=tuple)
 
 

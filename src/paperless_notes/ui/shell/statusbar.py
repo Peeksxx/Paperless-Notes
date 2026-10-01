@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, Qt, QTimer, Signal
-from PySide6.QtGui import QPainter, QPaintEvent, QResizeEvent
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QWidget
 
 from paperless_notes.core import textformat
 from paperless_notes.core.session import NoteSession
 from paperless_notes.mdio.edits import count_tasks
 from paperless_notes.ui.editor.note_editor import NoteEditor
-from paperless_notes.ui.shell.widgets import paint_dot
+from paperless_notes.ui.shell.widgets import ToneLabel
 from paperless_notes.ui.sync.page_sync import session_tone, short_state
 from paperless_notes.ui.theme.tokens import Theme
 
@@ -28,29 +28,6 @@ def count_words(text: str) -> int | None:
     return None if len(text) > WORD_COUNT_LIMIT else len(text.split())
 
 
-class StateDot(QWidget):
-    def __init__(self, theme: Theme) -> None:
-        super().__init__()
-        self._theme = theme
-        self.tone = ""
-        self.setFixedSize(18, 18)
-
-    def set_tone(self, tone: str) -> None:
-        self.tone = tone
-        self.setVisible(bool(tone))
-        self.update()
-
-    def apply_theme(self, theme: Theme) -> None:
-        self._theme = theme
-        self.update()
-
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
-        painter = QPainter(self)
-        paint_dot(
-            painter, QPointF(self.width() / 2 + 2, self.height() / 2), self.tone, self._theme.palette, 3.0
-        )
-
-
 class StatusBar(QWidget):
     zoom_reset_requested = Signal()
 
@@ -62,10 +39,7 @@ class StatusBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(theme.spacing.sm, 0, theme.spacing.md, 0)
         layout.setSpacing(0)
-        self.dot = StateDot(theme)
-        self.dot.hide()
-        layout.addWidget(self.dot)
-        self.sync = QLabel("")
+        self.sync = ToneLabel(theme)
         self.sync.setAccessibleName("Save and sync state")
         self.words = QLabel("")
         self.words.setAccessibleName("Word count")
@@ -103,7 +77,7 @@ class StatusBar(QWidget):
         optional = (self.format, self.words)
         for widget in optional:
             widget.setVisible(True)
-        fixed = [self.dot, self.sync, self.position, self.zoom, *((self.tasks,) if self._has_tasks else ())]
+        fixed = [self.sync, self.position, self.zoom, *((self.tasks,) if self._has_tasks else ())]
         layout = self.layout()
         margins = layout.contentsMargins() if layout is not None else None
         spare = self.width() - (margins.left() + margins.right() if margins is not None else 0)
@@ -130,7 +104,7 @@ class StatusBar(QWidget):
             widget.setVisible(has_note)
         if editor is None or session is None:
             self.sync.setText("")
-            self.dot.set_tone("")
+            self.sync.set_tone("")
             self.tasks.hide()
             return
         editor.cursorPositionChanged.connect(self._update_position)
@@ -146,12 +120,12 @@ class StatusBar(QWidget):
         if session is None:
             return
         self.sync.setText(short_state(session))
-        self.dot.set_tone(session_tone(session) if self.sync.text() else "")
+        self.sync.set_tone(session_tone(session) if self.sync.text() else "")
         self.format.setText(format_label(session.text_format))
         self._fit()
 
     def apply_theme(self, theme: Theme) -> None:
-        self.dot.apply_theme(theme)
+        self.sync.apply_theme(theme)
 
     def _update_position(self) -> None:
         if self._editor is None:

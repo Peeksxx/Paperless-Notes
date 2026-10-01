@@ -29,6 +29,7 @@ from paperless_notes.ui.editor.authoring_ui import AuthoringBar, FormatBubble, S
 from paperless_notes.ui.editor.find_bar import FindBar
 from paperless_notes.ui.editor.note_editor import NoteEditor
 from paperless_notes.ui.shell.flow import FlowLayout
+from paperless_notes.ui.shell.motion import SlideOut
 from paperless_notes.ui.sync.page_sync import SyncHooks, SyncPresenter
 from paperless_notes.ui.theme.tokens import Theme
 
@@ -227,7 +228,10 @@ class NotePage(QWidget):
         layout.addLayout(self._bar_row)
         self.find_bar = FindBar(editor, theme)
         self._find_row = QHBoxLayout()
-        self._find_row.addWidget(self.find_bar)
+        self.find_box = SlideOut(
+            self.find_bar, Qt.Edge.TopEdge, lambda: self._theme.ms(self._theme.motion.normal_ms)
+        )
+        self._find_row.addWidget(self.find_box)
         layout.addLayout(self._find_row)
         layout.addWidget(editor, 1)
         self.slash_menu = SlashMenu(editor, self.authoring)

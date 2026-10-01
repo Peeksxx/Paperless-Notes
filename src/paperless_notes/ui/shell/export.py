@@ -31,7 +31,7 @@ from paperless_notes.core.security.resources import ResourcePolicy
 from paperless_notes.mdio.document import SafeTextDocument, decode_image
 from paperless_notes.mdio.render import RenderPolicy, render_html, render_plain
 from paperless_notes.ui.shell.dialogs import Prompter
-from paperless_notes.ui.theme.tokens import LIGHT, Theme, theme
+from paperless_notes.ui.theme.tokens import LIGHT, NOTE_FONTS, Theme, theme
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,7 @@ _MIME = {
     "webp": "image/webp",
     "bmp": "image/bmp",
 }
+_STATIC_FACES = {"Segoe UI Variable": "Segoe UI", "Cascadia Mono": "Consolas"}
 
 
 class ExportFormat(Enum):
@@ -78,25 +79,53 @@ def system_clipboard(data: dict[str, str]) -> None:
     clipboard.setMimeData(mime)
 
 
-def export_css(current: Theme) -> str:
-    """Restrained styling from the theme tokens: the note face, text colours, code and table hairlines."""
+def export_css(current: Theme, note_font: str = "sans", pdf: bool = False) -> str:
+    """Styling that matches the editor: the note's face at the note size, natural line spacing with one
+    blank line's worth of space between blocks, the editor's heading sizes, and its quote, code, link and
+    task styles. The PDF writer embeds variable faces at their default instance (heavy for Segoe UI
+    Variable), so PDF output names static faces instead, and leaves the page framing to the PDF margins."""
     p = current.palette
     t = current.typography
-    body = ", ".join(f'"{f}"' for f in t.ui_families) + ", sans-serif"
-    mono = ", ".join(f'"{f}"' for f in t.mono_families) + ", monospace"
+    families = NOTE_FONTS.get(note_font, NOTE_FONTS["sans"])
+    mono_families = t.mono_families
+    if pdf:
+        families = tuple(_STATIC_FACES.get(f, f) for f in families)
+        mono_families = tuple(_STATIC_FACES.get(f, f) for f in mono_families)
+    generic = {"serif": "serif", "mono": "monospace"}.get(note_font, "sans-serif")
+    body = ", ".join(f'"{f}"' for f in dict.fromkeys(families)) + f", {generic}"
+    mono = ", ".join(f'"{f}"' for f in dict.fromkeys(mono_families)) + ", monospace"
+    gap = "0.9em"
+    framing = "" if pdf else f"background: {p.page}; max-width: 46em; margin: 2em auto; padding: 0 1em; "
     return (
-        f"body {{ font-family: {body}; font-size: {t.note_pt}pt; color: {p.text}; background: {p.page}; "
-        "line-height: 1.5; max-width: 46em; margin: 2em auto; padding: 0 1em; }\n"
-        "h1 { font-size: 1.6em; } h2 { font-size: 1.35em; } h3 { font-size: 1.2em; }\n"
-        f"code, pre {{ font-family: {mono}; background: {p.code_background}; }}\n"
-        "pre { padding: 0.75em; white-space: pre-wrap; }\n"
-        f"blockquote {{ margin-left: 0; padding-left: 1em; border-left: 3px solid {p.border_strong}; "
-        f"color: {p.quote}; }}\n"
-        "table { border-collapse: collapse; }\n"
+        f"body {{ font-family: {body}; font-size: {t.note_pt}pt; color: {p.text}; {framing}}}\n"
+        f"p {{ margin: 0 0 {gap} 0; }}\n"
+        "h1, h2, h3, h4, h5, h6 { font-weight: bold; margin: 1.1em 0 0.45em 0; }\n"
+        "h1 { font-size: 1.6em; } h2 { font-size: 1.35em; } h3 { font-size: 1.2em; } "
+        "h4 { font-size: 1.1em; } h5, h6 { font-size: 1em; }\n"
+        f"ul, ol {{ margin: 0 0 {gap} 0; padding-left: 1.6em; }} li {{ margin: 0; }}\n"
+        f"li.task {{ list-style: none; }} .done {{ color: {p.text_muted}; text-decoration: line-through; }}\n"
+        f"code {{ font-family: {mono}; background: {p.code_background}; }}\n"
+        f"pre {{ font-family: {mono}; background: {p.code_background}; padding: 0.6em 0.8em; "
+        f"margin: 0 0 {gap} 0; white-space: pre-wrap; }}\n"
+        "pre code { background: transparent; }\n"
+        f"blockquote {{ margin: 0 0 {gap} 0; padding-left: 0.9em; border-left: 3px solid {p.border_strong}; "
+        f"color: {p.quote}; font-style: italic; }}\n"
+        f"table {{ border-collapse: collapse; margin: 0 0 {gap} 0; }}\n"
         f"th, td {{ border: 1px solid {p.border}; padding: 0.3em 0.6em; }}\n"
-        f"a {{ color: {p.link}; }} hr {{ border: 0; border-top: 1px solid {p.border_strong}; }}\n"
-        f".image {{ color: {p.text_muted}; }} li.task {{ list-style: none; }}\n"
+        f"table.quote {{ margin: {gap} 0 {gap} 0; }}\n"
+        f"td.quote {{ border: 0; border-left: 3px solid {p.border_strong}; padding: 0 0 0 0.9em; "
+        f"color: {p.quote}; font-style: italic; }}\n"
+        f"a {{ color: {p.link}; }}\n"
+        f"hr {{ border: 0; border-top: 1px solid {p.border_strong}; margin: {gap} 0; }}\n"
+        f".image {{ color: {p.text_muted}; }}\n"
     )
+
+
+def quote_tables(body: str) -> str:
+    """Blockquotes as one-cell tables, for the PDF: Qt's layout draws a table cell's left border but not a
+    blockquote's."""
+    opening = '<table class="quote" cellspacing="0" cellpadding="0"><tr><td class="quote">'
+    return body.replace("<blockquote>", opening).replace("</blockquote>", "</td></tr></table>")
 
 
 def html_page(title: str, body: str, css: str) -> str:
@@ -244,7 +273,12 @@ class Exporter:
         return path, expected, ""
 
     def export(
-        self, note_path: str, text: str, fmt: ExportFormat, done: Callable[[ExportResult], None]
+        self,
+        note_path: str,
+        text: str,
+        fmt: ExportFormat,
+        done: Callable[[ExportResult], None],
+        note_font: str = "sans",
     ) -> None:
         """Export ``text`` (a snapshot of the note) and report through ``done`` on the UI thread."""
         if self.busy:
@@ -257,7 +291,7 @@ class Exporter:
         self.busy = True
         title = ntpath.splitext(ntpath.basename(note_path))[0]
         current = self._theme() if fmt is ExportFormat.HTML else theme(LIGHT)
-        css = export_css(current)
+        css = export_css(current, note_font, pdf=fmt is ExportFormat.PDF)
         target = path
 
         def finish(result: ExportResult) -> None:
@@ -268,7 +302,8 @@ class Exporter:
             images = ImagePolicy(self._fs, self._assets, note_path, embed=False)
 
             def build() -> str:
-                return html_page(title, render_html(text, RenderPolicy(link_allowed, images)), css)
+                body = render_html(text, RenderPolicy(link_allowed, images))
+                return html_page(title, quote_tables(body), css)
 
             def laid_out(outcome: Outcome[str]) -> None:
                 if outcome.error is not None or outcome.value is None:

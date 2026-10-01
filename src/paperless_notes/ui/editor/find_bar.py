@@ -19,6 +19,7 @@ from paperless_notes.mdio.find import Finder, FindOptions, FindResult, replace_a
 from paperless_notes.ui.editor.authoring import READ_ONLY
 from paperless_notes.ui.editor.note_editor import NoteEditor
 from paperless_notes.ui.shell.flow import FlowLayout
+from paperless_notes.ui.shell.motion import SlideOut
 from paperless_notes.ui.theme.tokens import Theme
 
 REFRESH_MS = 200
@@ -338,6 +339,10 @@ class FindBar(QWidget):
         self.controller.changed.connect(self._update)
         self.controller.message.connect(self.message.setText)
         self.hide()
+
+    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+        if not SlideOut.take(self, visible):
+            super().setVisible(visible)
 
     def open_bar(self, replace: bool = False) -> None:
         """Show the bar with the selected text (one line) as the search, and focus the field."""

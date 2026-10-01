@@ -40,6 +40,15 @@ class ShellStyle(QProxyStyle):
                 return
         if element == QStyle.PrimitiveElement.PE_FrameFocusRect and widget is not None:
             return
+        arrow = getattr(widget.parentWidget(), "paint_scroll_arrow", None) if widget is not None else None
+        if (
+            element
+            in (QStyle.PrimitiveElement.PE_IndicatorArrowLeft, QStyle.PrimitiveElement.PE_IndicatorArrowRight)
+            and callable(arrow)
+            and _named(widget.parentWidget() if widget is not None else None, TABS)
+        ):
+            arrow(painter, QRectF(option.rect), element == QStyle.PrimitiveElement.PE_IndicatorArrowLeft)  # type: ignore[attr-defined]
+            return
         super().drawPrimitive(element, option, painter, widget)
 
     def drawControl(  # noqa: N802 - Qt override
@@ -63,6 +72,16 @@ class ShellStyle(QProxyStyle):
         ) and callable(hook):
             return
         super().drawControl(element, option, painter, widget)
+
+    def pixelMetric(  # noqa: N802 - Qt override
+        self,
+        metric: QStyle.PixelMetric,
+        option: QStyleOption | None = None,
+        widget: QWidget | None = None,
+    ) -> int:
+        if metric == QStyle.PixelMetric.PM_TabBarScrollButtonWidth and _named(widget, TABS):
+            return 28
+        return super().pixelMetric(metric, option, widget)
 
     @staticmethod
     def _branch(option: QStyleOption, painter: QPainter) -> None:

@@ -26,7 +26,9 @@ from paperless_notes.mdio.adapter import TextDocumentAdapter
 from paperless_notes.mdio.document import SafeTextDocument
 from paperless_notes.mdio.highlighter import MarkdownHighlighter
 from paperless_notes.ui.editor.authoring import AuthoringHost
+from paperless_notes.ui.editor.emoji_assist import EmojiAssist
 from paperless_notes.ui.editor.note_editor import NoteEditor, highlight_theme
+from paperless_notes.ui.editor.spelling_assist import SpellAssist, SpellService
 from paperless_notes.ui.editor.views import DocumentViews
 from paperless_notes.ui.shell.page import NotePage
 from paperless_notes.ui.sync.page_sync import SyncHooks
@@ -60,6 +62,7 @@ class PageFactory:
         self._authoring_host = authoring_host
         self._page_menu = page_menu
         self._connections: dict[int, list[QMetaObject.Connection]] = {}
+        self.spelling: SpellService | None = None
 
     def open(self, path: str) -> NotePage:
         session = self.manager.acquire(path)
@@ -73,6 +76,9 @@ class PageFactory:
         font = self._local.note_font(session.path) or self.settings.note_font
         editor = NoteEditor(document, self.theme, None, self._opener, font, self.settings.readable_width)
         editor.setReadOnly(adapter.read_only)
+        if self.spelling is not None:
+            SpellAssist(editor, self.spelling)
+        EmojiAssist(editor)
         host = self._authoring_host(session) if self._authoring_host is not None else None
         page = NotePage(
             session,
@@ -102,9 +108,12 @@ class PageFactory:
             return
 
         def create() -> MarkdownHighlighter:
-            return MarkdownHighlighter(
+            highlighter = MarkdownHighlighter(
                 editor.document(), highlight_theme(self.theme, "sans", editor.point_size), conceal=True
             )
+            if self.spelling is not None:
+                self.spelling.attach(highlighter)
+            return highlighter
 
         self.views.install_highlighter(editor, create)
 

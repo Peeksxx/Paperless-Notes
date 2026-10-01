@@ -60,6 +60,10 @@ class AppPaths:
         return self.root / "index"
 
     @property
+    def dictionary_file(self) -> Path:
+        return self.root / "dictionary.json"
+
+    @property
     def ledger_dir(self) -> Path:
         return self.root / "ledger"
 

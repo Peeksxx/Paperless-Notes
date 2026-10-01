@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import time
 from collections import deque
@@ -196,3 +197,64 @@ class QtIOExecutor(QObject):
         finished = self._pool.waitForDone(round(timeout_s * 1000))
         QCoreApplication.sendPostedEvents(self, QEvent.Type.MetaCall)
         return finished
+
+
+_holders = 0
+_restore_automatic = True
+
+
+def _hold_collection() -> None:
+    global _holders, _restore_automatic
+    if _holders == 0:
+        _restore_automatic = gc.isenabled()
+        gc.disable()
+    _holders += 1
+
+
+def _release_collection() -> None:
+    global _holders
+    _holders = max(0, _holders - 1)
+    if _holders == 0 and _restore_automatic:
+        gc.enable()
+
+
+class MainThreadCollector(QObject):
+    """Runs Python's cycle collector only on the thread that owns this object (the GUI thread) while it
+    exists.
+
+    Automatic collection runs on whichever thread happens to allocate. A collection on an I/O worker can
+    free Qt objects there, which crashes the process; the spelling word list (loaded on a worker at start)
+    made that likely. While any collector exists, automatic collection is off and each one checks the same
+    thresholds on a timer. ``MainWindow`` owns one, so the policy lasts as long as its worker threads;
+    automatic collection comes back when the last collector is stopped or destroyed."""
+
+    def __init__(self, interval_ms: int = 500, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        held = [True]
+
+        def release() -> None:
+            if held[0]:
+                held[0] = False
+                _release_collection()
+
+        _hold_collection()
+        self._release = release
+        self.destroyed.connect(lambda *_args: release())
+        self._timer = QTimer(self)
+        self._timer.setInterval(interval_ms)
+        self._timer.timeout.connect(self.check)
+        self._timer.start()
+
+    def check(self) -> int:
+        """Collect the oldest generation whose count passed its threshold (younger ones are included);
+        returns the number of unreachable objects found."""
+        counts = gc.get_count()
+        thresholds = gc.get_threshold()
+        for generation in (2, 1, 0):
+            if thresholds[generation] and counts[generation] > thresholds[generation]:
+                return gc.collect(generation)
+        return 0
+
+    def stop(self) -> None:
+        self._timer.stop()
+        self._release()

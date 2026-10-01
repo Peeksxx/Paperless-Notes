@@ -21,6 +21,7 @@ from paperless_notes.mdio.find import Finder, FindOptions
 from paperless_notes.mdio.outline import Outline, outline_of_document
 from paperless_notes.ui.editor.note_editor import NoteEditor
 from paperless_notes.ui.shell.export import Exporter, ExportFormat, ExportResult
+from paperless_notes.ui.shell.motion import SlideOut
 from paperless_notes.ui.shell.page import NotePage
 from paperless_notes.ui.shell.tool_panel import ToolPanel
 from paperless_notes.ui.shell.workbench import Workbench
@@ -191,7 +192,7 @@ class NoteTools(QObject):
         self.refresh_outline()
 
     def toggle_outline(self) -> None:
-        if self.panel.isVisible():
+        if SlideOut.is_open(self.panel):
             self.panel.close_panel()
         else:
             self.show_panel("outline")
@@ -286,7 +287,7 @@ class NoteTools(QObject):
     def export(self, page: NotePage, fmt: ExportFormat) -> None:
         session = page.session
         self._toast(f"Exporting {ntpath.basename(session.path)} as {fmt.label}...")
-        self.exporter.export(session.path, session.buffer_text(), fmt, self._exported)
+        self.exporter.export(session.path, session.buffer_text(), fmt, self._exported, page.editor.note_font)
 
     def _export_active(self, fmt: ExportFormat) -> None:
         self._on_active(lambda page: self.export(page, fmt))

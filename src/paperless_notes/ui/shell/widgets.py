@@ -17,8 +17,9 @@ from PySide6.QtGui import (
     QPaintEvent,
     QPen,
 )
-from PySide6.QtWidgets import QAbstractButton, QFrame, QHBoxLayout, QSizePolicy, QWidget
+from PySide6.QtWidgets import QAbstractButton, QFrame, QHBoxLayout, QLabel, QSizePolicy, QWidget
 
+from paperless_notes.ui.shell.motion import Glow, Tween, faded, mix
 from paperless_notes.ui.theme.icons import draw_glyph
 from paperless_notes.ui.theme.tokens import Palette, Theme
 
@@ -67,6 +68,47 @@ def display_font(theme: Theme, point_size: float | None = None) -> QFont:
 
 def tone_color(tone: str, p: Palette) -> str:
     return {OK: p.state_ok, BUSY: p.state_busy, ATTENTION: p.state_attention}.get(tone, p.marker)
+
+
+def tone_text_color(tone: str, p: Palette, neutral: str) -> str:
+    """Text colour for a state: the warning colour while saving, the error colour when a note needs
+    attention, otherwise ``neutral``."""
+    return {BUSY: p.warning_text, ATTENTION: p.error_text}.get(tone, neutral)
+
+
+class ToneLabel(QLabel):
+    """A label whose text colour shows a state instead of a dot; the colour fades between states."""
+
+    def __init__(self, theme: Theme, neutral: str = "text_muted") -> None:
+        super().__init__()
+        self._theme = theme
+        self._neutral = neutral
+        self.tone = ""
+        self._color = Tween(self, QColor(self._target()), lambda _value: self.update())
+
+    def _target(self) -> str:
+        p = self._theme.palette
+        return tone_text_color(self.tone, p, str(getattr(p, self._neutral)))
+
+    def set_tone(self, tone: str) -> None:
+        if tone != self.tone:
+            self.tone = tone
+            self._color.to(QColor(self._target()), self._theme.ms(self._theme.motion.normal_ms))
+
+    def color(self) -> QColor:
+        return QColor(self._color.value)
+
+    def apply_theme(self, theme: Theme) -> None:
+        self._theme = theme
+        self._color.jump(QColor(self._target()))
+
+    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        painter.setPen(self.color())
+        rect = self.contentsRect()
+        text = self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(rect, int(self.alignment()), text)
 
 
 def paint_dot(painter: QPainter, center: QPointF, tone: str, p: Palette, radius: float = 3.5) -> None:
@@ -232,6 +274,7 @@ class RowButton(QAbstractButton):
         self._annotation = annotation
         self._theme = theme
         self._hover = False
+        self._glow = Glow(self, lambda: self._theme.ms(self._theme.motion.fast_ms))
         self._framed = framed
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -248,40 +291,36 @@ class RowButton(QAbstractButton):
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
         m = self._theme.metrics
-        width = 44 + self.fontMetrics().horizontalAdvance(self.text())
+        self.ensurePolished()
+        # 36 before the label and 8 after it, plus 4 so rounding never elides a label that fits.
+        width = 48 + self.fontMetrics().horizontalAdvance(self.text())
         if self._shortcut:
             width += keycaps_width(self._shortcut, meta_font(self._theme)) + 12
         return QSize(width, m.row)
 
     def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - Qt override
         self._hover = True
-        self.update()
+        self._glow.set_on(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event: object) -> None:  # noqa: N802 - Qt override
         self._hover = False
-        self.update()
+        self._glow.set_on(False)
         super().leaveEvent(event)  # type: ignore[arg-type]
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
         p = self._theme.palette
+        glow = self._glow.amount
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        fill = None
-        if self.isDown() or self.isChecked():
-            fill = p.selected
-        elif self._hover:
-            fill = p.hover
-        elif self._framed:
-            fill = p.surface if self._theme.dark else p.page
-        if fill is not None:
+        rest = QColor(p.surface if self._theme.dark else p.page) if self._framed else faded(p.hover, 0.0)
+        fill = QColor(p.selected) if self.isDown() or self.isChecked() else mix(rest, p.hover, glow)
+        if fill.alpha() > 0:
             painter.setPen(
-                QPen(QColor(p.border_strong if self._hover else p.border), 1)
-                if self._framed
-                else Qt.PenStyle.NoPen
+                QPen(mix(p.border, p.border_strong, glow), 1) if self._framed else Qt.PenStyle.NoPen
             )
-            painter.setBrush(QColor(fill))
+            painter.setBrush(fill)
             painter.drawRoundedRect(rect, self._theme.radius.md, self._theme.radius.md)
         if self.hasFocus() and self.window().testAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange):
             painter.setPen(QPen(QColor(p.focus), 1.5))
@@ -289,8 +328,7 @@ class RowButton(QAbstractButton):
             painter.drawRoundedRect(
                 rect.adjusted(0.75, 0.75, -0.75, -0.75), self._theme.radius.md, self._theme.radius.md
             )
-        active = self.isChecked() or self._hover
-        color = QColor(p.text if active else p.text_secondary)
+        color = mix(p.text_secondary, p.text, 1.0 if self.isChecked() else glow)
         if not self.isEnabled():
             color = QColor(p.text_muted)
         mid = self.height() / 2
@@ -328,6 +366,7 @@ class CaptionButton(QAbstractButton):
         self.kind = kind
         self._theme = theme
         self._hover = False
+        self._glow = Glow(self, lambda: self._theme.ms(self._theme.motion.fast_ms))
         self._active = True
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
@@ -345,7 +384,7 @@ class CaptionButton(QAbstractButton):
         """Hover from outside Qt's own events, for a button Windows treats as part of the frame."""
         if hover != self._hover:
             self._hover = hover
-            self.update()
+            self._glow.set_on(hover)
 
     def apply_theme(self, theme: Theme) -> None:
         self._theme = theme
@@ -353,26 +392,25 @@ class CaptionButton(QAbstractButton):
         self.update()
 
     def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - Qt override
-        self._hover = True
-        self.update()
+        self.set_hover(True)
         super().enterEvent(event)
 
     def leaveEvent(self, event: object) -> None:  # noqa: N802 - Qt override
-        self._hover = False
-        self.update()
+        self.set_hover(False)
         super().leaveEvent(event)  # type: ignore[arg-type]
 
     def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
         p = self._theme.palette
+        glow = self._glow.amount
         painter = QPainter(self)
         close = self.kind == "close"
         glyph = QColor(p.text if self._active else p.text_muted)
         if self.isDown():
             painter.fillRect(self.rect(), QColor(p.danger_pressed if close else p.selected))
             glyph = QColor(p.on_danger) if close else glyph
-        elif self._hover:
-            painter.fillRect(self.rect(), QColor(p.danger_fill if close else p.hover))
-            glyph = QColor(p.on_danger) if close else QColor(p.text)
+        elif glow > 0:
+            painter.fillRect(self.rect(), faded(p.danger_fill if close else p.hover, glow))
+            glyph = mix(glyph, p.on_danger if close else p.text, glow)
         dpr = self.devicePixelRatioF()
         side = round(10 * dpr)
         stroke = max(1, round(dpr))

@@ -18,7 +18,7 @@ analysis = Analysis(
     [str(ROOT / "src" / "paperless_notes" / "__main__.py")],
     pathex=[str(ROOT / "src")],
     binaries=[],
-    datas=[],
+    datas=[(str(ROOT / "src" / "paperless_notes" / "data"), "paperless_notes/data")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
