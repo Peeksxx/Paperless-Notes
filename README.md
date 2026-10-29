@@ -218,12 +218,10 @@ onedir application, verifies its contents, creates the portable ZIP and installe
 
 ## Verification status
 
-The 4.3.0 source passed:
+The 4.4.0 source passed, on Windows:
 
 - Text hygiene, Ruff lint and formatting, and strict mypy checks.
-- 1,272 functional tests with 92.05 percent coverage.
-- 44 untraced timing and memory tests.
-- 5,300 generated sync worlds and mutation checks.
+- 1,353 unit, integration, property, generated sync, fuzz and interface tests.
 - Layout checks at 100, 125, 150 and 200 percent in both themes, at 1365 by 900 and 720 by 480.
 
 ## License and third-party software

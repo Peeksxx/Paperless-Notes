@@ -290,10 +290,19 @@ class NoteEditor(QPlainTextEdit):
             extra = natural - cap
             side += extra // 2
             right += extra - extra // 2
+        before = self.viewport().width()
         self.setViewportMargins(side, 0, right, 0)
+        if self.viewport().width() != before:
+            self._rewrap()
         cr = self.contentsRect()
         self._gutter.setGeometry(QRect(cr.left() + side - gutter, cr.top(), gutter, cr.height()))
         self.column_changed.emit(side, max(0, self.width() - side - right))
+
+    def _rewrap(self) -> None:
+        """Wrap the text again to the visible column. Qt wraps on a resize before the margins above change,
+        and not when only the margins change, so a short note kept lines wider than its column."""
+        size = self.size()
+        super().resizeEvent(QResizeEvent(size, QSize(-1, size.height())))
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)

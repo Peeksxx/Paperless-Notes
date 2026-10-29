@@ -1,13 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Fixes
+- A short note opened in a wide window wraps to its column at once. Its long lines could run past the right
+  edge until the window was resized.
+
 ## 4.4.0 (2026-10-29)
 
 ### Writing
 - Spelling is rebuilt. Obvious typos such as teh, recieve or becuase are corrected as soon as the word
   ends, each correction as its own undo step, and a small note under the word shows the change: Esc puts
   your word back this time and the same typo is still corrected next time, Shift+Esc puts it back and adds
-  it to your dictionary, and Ctrl+Z also undoes it. Names, slang and less certain words are only underlined: rest the
-  pointer on one, or press Ctrl+Period with the caret in it, for suggestions, Add to dictionary and Ignore.
+  it to your dictionary, and Ctrl+Z also undoes it. Names, slang and less certain words are only
+  underlined: rest the pointer on one, or press Ctrl+Period with the caret in it, for suggestions, Add to
+  dictionary and Ignore.
   Right-clicking the word lists the same. Settings, Writing, Fix obvious typos as you type turns the
   corrections off. The faded suggestion drawn over the word and its bar are gone.
 - Enter inside bold, italic or strikethrough keeps both lines formatted; Backspace or Delete at the join
