@@ -1,5 +1,77 @@
 # Changelog
 
+## 4.4.0 (2026-10-29)
+
+### Writing
+- Spelling is rebuilt. Obvious typos such as teh, recieve or becuase are corrected as soon as the word
+  ends, each correction as its own undo step, and a small note under the word shows the change: Esc puts
+  your word back this time and the same typo is still corrected next time, Shift+Esc puts it back and adds
+  it to your dictionary, and Ctrl+Z also undoes it. Names, slang and less certain words are only underlined: rest the
+  pointer on one, or press Ctrl+Period with the caret in it, for suggestions, Add to dictionary and Ignore.
+  Right-clicking the word lists the same. Settings, Writing, Fix obvious typos as you type turns the
+  corrections off. The faded suggestion drawn over the word and its bar are gone.
+- Enter inside bold, italic or strikethrough keeps both lines formatted; Backspace or Delete at the join
+  makes the run whole again. Each is one undo step.
+- Bold, italic, strikethrough, code and links can run across a line break inside one paragraph, list item
+  or quote, as on GitHub and in Obsidian, in the editor and in exports.
+- Pasting from web pages, Word or Google Docs no longer leaves stray or empty `**` marks. Quotes and list
+  items keep their structure, and text pasted inside bold takes on the bold.
+- Ctrl+B, Ctrl+I and strikethrough leave punctuation next to a word outside the marks, so the result shows
+  as bold everywhere.
+- Enter in a quote continues the quote; Enter on an empty quote line ends it.
+- The word count leaves out Markdown marks: list dashes, heading hashes, quote marks, table pipes, task
+  boxes and list numbers.
+- A new, empty note shows a faint "Use [/] for quick slash commands!" until you type.
+
+### Tab groups
+- Split view is replaced by tab groups, as in Notepad++. The button beside the search box, or
+  Ctrl+Shift+\\, opens the current note in a new group beside it, up to three groups. Drag a tab onto
+  another group, or right-click it and choose Move to group. A group closes with its last tab, F6 moves to
+  the next group, and the groups come back when the app starts. A second pane saved by 4.3.0 comes back as
+  a second group.
+
+### Note colours
+- Format, Theme chooses one note's background and text colours with colour pickers. The page, title and
+  buttons above the text take them on, the other colours are mixed from them, and the dialog warns when
+  the text would be hard to read. Every view of that note shows them, they are kept on this PC, and they
+  follow the note when it or its folder is renamed. Use default theme goes back to the theme in Settings,
+  which is now called Default theme.
+- Export as HTML and PDF follow the note's colours, with the colour reaching the edge of each PDF page.
+
+### Interface
+- A separate Export menu, last in the row beside Note, holds every export and copy option. The Note menu
+  keeps Find, Replace and the outline. The buttons in that row are evenly spaced.
+- On first start the window opens at a moderate size in the middle of the screen instead of filling it,
+  and a remembered size that no longer fits the screen is brought back onto it.
+- Closing the sidebar slides, with the page moving along, instead of snapping.
+- The check after a save stays for as long as the note is saved.
+- Settings is shorter and scrolls.
+- Tips stay on screen, even when the window is wider than the screen.
+- The top-right corner pixel of the window now hits Close.
+- Settings is redesigned with sections for Appearance, Writing, Saving and Window, and switches that slide.
+- Switching between light and dark fades smoothly, the window fades in when the app starts, and dialogs
+  fade in.
+- The slash menu, the emoji list, the selection format bar and the spelling popups share one look and fade
+  into place.
+- The status bar shows a small turning mark while a save takes more than a moment, then a check once the
+  note is saved.
+- Windows no longer flash on the screen for a moment while the app starts.
+- Settings, Window, Reduce motion turns all of these animations off.
+
+### Export
+- Export as shown, in the Export menu: a PDF on US Letter pages, one long PNG image, or a web page that looks
+  the way the note looks in the editor, in your theme, note font, zoom and column width, with its title,
+  dots, task boxes, quote bars, code panels and rules. Pages break between lines and keep a heading with the
+  text under it. The existing HTML, PDF and plain text exports are unchanged.
+
+### Fixes
+- Typing `- ` under a list item or quote no longer turns the line above into a large heading for a moment.
+  Lists and quotes followed by a dash or equals line are never read as headings, in the editor, the outline
+  or exports.
+- List dashes, task boxes and quote bars always become dots, boxes and bars. Lines with emoji lost them, and
+  the line you left after an undo or paste could keep its raw dash.
+- With the same note in two tab groups, the narrower group wraps its lines instead of scrolling sideways.
+
 ## 4.3.0 (2026-10-01)
 
 ### Writing

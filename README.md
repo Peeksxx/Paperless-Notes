@@ -16,11 +16,11 @@ See [LICENSE](LICENSE) for the terms.
 
 ## Download
 
-Paperless Notes 4.3.0 supports 64-bit Windows 10 and Windows 11.
+Paperless Notes 4.4.0 supports 64-bit Windows 10 and Windows 11.
 
-- [Download the Windows installer](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.3.0/Paperless-Notes-4.3.0-setup.exe)
-- [Download the portable ZIP](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.3.0/Paperless-Notes-4.3.0-portable-win64.zip)
-- [View checksums and release notes](https://github.com/Peeksxx/Paperless-Notes/releases/tag/v4.3.0)
+- [Download the Windows installer](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.4.0/Paperless-Notes-4.4.0-setup.exe)
+- [Download the portable ZIP](https://github.com/Peeksxx/Paperless-Notes/releases/download/v4.4.0/Paperless-Notes-4.4.0-portable-win64.zip)
+- [View checksums and release notes](https://github.com/Peeksxx/Paperless-Notes/releases/tag/v4.4.0)
 
 The installer is per-user, needs no administrator access, and installs the program to
 `%LOCALAPPDATA%\Programs\Paperless Notes`. Desktop and **Open with** integration are optional and off
@@ -35,8 +35,9 @@ the SHA-256 value matches `SHA256SUMS.txt` before choosing **More info**, then *
 - Live Markdown styling for headings, emphasis, lists, tasks, quotes, code, tables, links, and images.
 - Insert and Format tools, `/` commands, selection formatting, smart lists, task counts, and one-step
   undo for authoring commands.
-- Built-in English spell checking with in-place corrections (Tab accepts, Esc keeps) and a personal
-  dictionary, all offline.
+- Built-in English spell checking, all offline: obvious typos are corrected as you type (Esc puts your
+  word back this time, Shift+Esc also adds it to your dictionary), and other misspelled words are
+  underlined with suggestions on hover, Ctrl+Period or right-click.
 - Emoji shortcodes such as `:skull:` with live suggestions as you type.
 - Automatic and manual saving through an atomic same-folder replacement, preserving encoding and line
   endings.
@@ -46,11 +47,14 @@ the SHA-256 value matches `SHA256SUMS.txt` before choosing **More info**, then *
   numbers.
 - A Home page with notes to continue, recent changes from every PC, pinned notes, and tags.
 - Folder library, pinned and recent tabs, and an outline of the open note.
-- Find and replace, two-pane split view, and export to HTML, PDF, or plain text.
+- Find and replace, up to three tab groups side by side, and export to HTML, PDF, or plain text. Export
+  as shown saves a PDF, a PNG image or a web page that looks the way the note looks in the editor.
+- Each note can have its own background and text colours (Format > Theme); its exports follow them.
 - Copy as Markdown or rich text. Pasted images are validated and stored in an `assets` folder beside
   the note.
 - Light and dark themes, interface scaling, keyboard navigation, and graphite as the default accent.
-- Short, quiet animations for panels, tabs, messages and Home, all off with Reduce motion.
+- Short, quiet animations for panels, tabs, menus, messages, dialogs, saving and the theme change, all off
+  with Reduce motion.
 
 ## Where files are stored
 
@@ -110,8 +114,14 @@ as OneDrive version history or a backup on another drive.
 
 ## Everyday use
 
-Use the **Insert** and **Format** controls above the editor, or type `/` at the start of a line. The
-**Note** menu contains find and replace, split view, export, and copy options.
+Use the **Insert** and **Format** controls above the editor, or type `/` at the start of a line.
+**Format > Theme** chooses the note's own background and text colours; the theme in Settings is the
+default for every other note. The **Note** menu contains find and replace and the outline. The
+**Export** menu holds every export (including Export as shown) and the copy options.
+
+The button beside the search box, or Ctrl+Shift+\\, opens the current note in a new tab group beside it,
+up to three groups. Drag a tab onto another group, or right-click it and choose **Move to group**. A
+group closes with its last tab, and F6 moves to the next group.
 
 The search box in the centre of the top bar, or Ctrl+Shift+P, opens the search palette. Plain text
 searches note names and the text of every eligible note in the library. A leading character changes
@@ -145,26 +155,31 @@ used tags, and the library folders.
 | Sidebar, help, settings | Ctrl+\\, F1, Ctrl+, |
 | Version history | Ctrl+Shift+H |
 | Find, replace, next, previous | Ctrl+F, Ctrl+H, F3, Shift+F3 |
-| Outline, switch split pane | Ctrl+Shift+O, F6 |
+| Outline | Ctrl+Shift+O |
+| New tab group, next tab group | Ctrl+Shift+\\, F6 |
 | Bold, italic, strike, code, link | Ctrl+B, Ctrl+I, Ctrl+Shift+X, Ctrl+E, Ctrl+K |
 | Headings 1 through 3 | Ctrl+Alt+1 through Ctrl+Alt+3 |
 | Move or duplicate lines | Alt+Up, Alt+Down, Shift+Alt+Down |
 | Paste as plain text | Ctrl+Shift+V |
+| Spelling suggestions | Ctrl+Period |
+| Undo a spelling correction | Esc this time (Shift+Esc also adds the word to your dictionary) |
 | Zoom | Ctrl+Plus, Ctrl+Minus, Ctrl+0 |
 
 Every shortcut also has a visible button or menu item. Press F1 for the built-in guide.
 
 ## Current limitations
 
-- Windows only, and the 4.3.0 binaries are not code-signed.
+- Windows only, and the 4.4.0 binaries are not code-signed.
 - Notes above 512 KB open without live styling. Files above 10 MB are not opened for editing.
 - Search skips note contents above 2 MB and online-only files. Their names can still appear.
 - Search does not match part of a word in scripts commonly written without spaces, including Chinese
   and Japanese.
 - Changes made by other programs reach the search index when the window is next activated.
 - Moving a note does not move its `assets` images, and unused images are not removed automatically.
-- Split view supports two panes. Caret-line styling follows the pane used most recently.
-- Export omits front matter and HTML comments. PDF export uses the light theme.
+- Up to three tab groups. Caret-line styling follows the group used most recently.
+- Note colours are kept on this PC only.
+- Export omits front matter and HTML comments. Export as PDF uses the light theme on A4 pages, or the
+  note's own colours when it has them; Export as shown uses your theme on US Letter pages.
 - Spell checking is English only. Screen readers read the Markdown source and its punctuation.
 - Upload status depends on the OneDrive signal reported on the current PC.
 
@@ -179,8 +194,8 @@ files, choose **Add folder** and select their existing folder.
 Download `SHA256SUMS.txt` from the release, then run:
 
 ```powershell
-Get-FileHash .\Paperless-Notes-4.3.0-setup.exe -Algorithm SHA256
-Get-FileHash .\Paperless-Notes-4.3.0-portable-win64.zip -Algorithm SHA256
+Get-FileHash .\Paperless-Notes-4.4.0-setup.exe -Algorithm SHA256
+Get-FileHash .\Paperless-Notes-4.4.0-portable-win64.zip -Algorithm SHA256
 ```
 
 Compare the output with the matching entries in `SHA256SUMS.txt`.

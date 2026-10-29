@@ -22,16 +22,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from paperless_notes.core.local_state import NoteColors
 from paperless_notes.core.security.filenames import NameCheck
 from paperless_notes.core.session import NoteSession
 from paperless_notes.ui.editor.authoring import Authoring, AuthoringHost
-from paperless_notes.ui.editor.authoring_ui import AuthoringBar, FormatBubble, SlashMenu
+from paperless_notes.ui.editor.authoring_ui import AuthoringBar, FormatBubble, SlashMenu, menu_button
 from paperless_notes.ui.editor.find_bar import FindBar
 from paperless_notes.ui.editor.note_editor import NoteEditor
 from paperless_notes.ui.shell.flow import FlowLayout
 from paperless_notes.ui.shell.motion import SlideOut
 from paperless_notes.ui.sync.page_sync import SyncHooks, SyncPresenter
-from paperless_notes.ui.theme.tokens import Theme
+from paperless_notes.ui.theme.qss import page_stylesheet
+from paperless_notes.ui.theme.tokens import Theme, note_theme
+
+EMPTY_NOTE_HINT = "Use [/] for quick slash commands!"
 
 
 def title_of(path: str) -> str:
@@ -106,7 +110,7 @@ class TitleField(QPlainTextEdit):
             return
         self.rename_requested.emit(text)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.commit()
             return
@@ -115,16 +119,16 @@ class TitleField(QPlainTextEdit):
             return
         super().keyPressEvent(event)
 
-    def insertFromMimeData(self, source: QMimeData) -> None:  # noqa: N802 - Qt override
+    def insertFromMimeData(self, source: QMimeData) -> None:
         self.insertPlainText(" ".join(source.text().split()))
 
-    def focusOutEvent(self, event: QFocusEvent) -> None:  # noqa: N802 - Qt override
+    def focusOutEvent(self, event: QFocusEvent) -> None:
         super().focusOutEvent(event)
         if self.text().strip() != self._current:
             self.commit()
         self.moveCursor(QTextCursor.MoveOperation.Start)
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._fit()
 
@@ -156,6 +160,10 @@ class MarksBar(QFrame):
 
 
 class NotePage(QWidget):
+    """One open note. ``colors`` is the note's own (background, text) pair, drawn over the default theme."""
+
+    theme_requested = Signal()
+
     def __init__(
         self,
         session: NoteSession,
@@ -166,12 +174,18 @@ class NotePage(QWidget):
         authoring_host: AuthoringHost | None = None,
         release: Callable[[NoteEditor], None] | None = None,
         menu: Callable[[NotePage], QMenu] | None = None,
+        export_menu: Callable[[NotePage], QMenu] | None = None,
+        colors: NoteColors | None = None,
     ) -> None:
         super().__init__()
         self.setObjectName("PageArea")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.session = session
         self.editor = editor
+        self.colors = colors
+        self._base = theme
+        self._sheet = ""
+        editor.setPlaceholderText(EMPTY_NOTE_HINT)
         self._release = release
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -211,20 +225,26 @@ class NotePage(QWidget):
         layout.addWidget(self.header_scroll)
         self.authoring = Authoring(editor, authoring_host)
         self.authoring_bar = AuthoringBar(self.authoring, theme)
-        self._bar_row = FlowLayout(spacing=s.xs)
+        self._bar_row = QHBoxLayout()
+        self._bar_row.setSpacing(0)
         self._bar_row.addWidget(self.authoring_bar)
+        format_menu = self.authoring_bar.format_menu
+        format_menu.addSeparator()
+        self.theme_action = format_menu.addAction("Theme...")
+        self.theme_action.setToolTip("Choose this note's background and text colours")
+        self.theme_action.triggered.connect(lambda _checked=False: self.theme_requested.emit())
         self.note_button: QToolButton | None = None
+        self.export_button: QToolButton | None = None
         if menu is not None:
-            self.note_button = QToolButton()
-            self.note_button.setText("Note")
-            self.note_button.setProperty("kind", "labelled")
-            self.note_button.setAccessibleName("Note")
-            self.note_button.setToolTip(
-                "Find and replace, outline, split view, export and copy for this note"
+            self.note_button = menu_button(
+                "Note", "Find and replace, and the outline, for this note", menu(self)
             )
-            self.note_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-            self.note_button.setMenu(menu(self))
-            self._bar_row.addWidget(self.note_button)
+            self.authoring_bar.add_trailing(self.note_button)
+        if export_menu is not None:
+            self.export_button = menu_button(
+                "Export", "Save this note as a web page, PDF, text or image, or copy it", export_menu(self)
+            )
+            self.authoring_bar.add_trailing(self.export_button)
         layout.addLayout(self._bar_row)
         self.find_bar = FindBar(editor, theme)
         self._find_row = QHBoxLayout()
@@ -249,6 +269,8 @@ class NotePage(QWidget):
         self.title.textChanged.connect(self._fit_timer.start)
         editor.marks_changed.connect(self._fit_timer.start)
         self._align(theme.metrics.gutter, editor.width())
+        if colors is not None:
+            self.apply_theme(theme)
 
     def _align(self, left: int, width: int) -> None:
         s = self._theme.spacing
@@ -266,18 +288,35 @@ class NotePage(QWidget):
         cap = max(self._theme.metrics.control * 3, self.height() // 2)
         self.header_scroll.setFixedHeight(min(wanted, cap))
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._fit_header()
 
     def _on_path_changed(self, path: str) -> None:
         self.title.set_title(title_of(path))
 
+    @property
+    def theme(self) -> Theme:
+        """The theme the page is drawn in: the default theme, or the note's own colours over it."""
+        return self._theme
+
     def apply_theme(self, theme: Theme) -> None:
-        self._theme = theme
-        self.editor.apply_theme(theme)
-        self.presenter.set_theme(theme)
-        self.find_bar.apply_theme(theme)
+        """Show ``theme``, or the note's own colours drawn over it when the note has them."""
+        self._base = theme
+        shown = theme if self.colors is None else note_theme(theme, *self.colors)
+        self._theme = shown
+        self.editor.apply_theme(shown)
+        self.presenter.set_theme(shown)
+        self.find_bar.apply_theme(shown)
+        sheet = "" if self.colors is None else page_stylesheet(shown)
+        if sheet != self._sheet:
+            self._sheet = sheet
+            self.setStyleSheet(sheet)
+
+    def set_colors(self, colors: NoteColors | None) -> None:
+        """Change the note's own colours, or go back to the default theme with None."""
+        self.colors = colors
+        self.apply_theme(self._base)
 
     def dispose(self) -> None:
         """Disconnect from the session and give the note's document back before this page goes away."""

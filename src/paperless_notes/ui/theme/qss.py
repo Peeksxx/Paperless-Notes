@@ -162,7 +162,8 @@ QLabel[role="section"] {{
 }}
 QLabel[role="meta"] {{ color: {p.text_muted}; font-size: {t.meta_pt}pt; }}
 
-#Toast, #Hint {{ background: {p.surface}; border: 1px solid {p.border_strong}; border-radius: {r.lg}px; }}
+QFrame#PopupRule {{ background: {p.border}; border: none; margin: 0 {s.xs}px; }}
+QScrollArea#SettingsScroll, QWidget#SettingsBody {{ background: transparent; border: none; }}
 #Panel {{ background: {p.page}; border-left: 1px solid {p.border}; }}
 #PaneFrame {{ background: {p.page}; border: none; border-top: 2px solid {p.window}; }}
 #PaneFrame[active="true"] {{ border-top: 2px solid {p.accent}; }}
@@ -210,6 +211,36 @@ QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::su
     background: transparent; border: none; width: 0; height: 0;
 }}
 QSplitter::handle {{ background: {p.border}; }}
+"""
+
+
+def page_stylesheet(theme: Theme) -> str:
+    """Colours for one note's page when the note has its own: the page, the text, title, sync line and the
+    buttons above the text. Set on the page itself, these win over the application stylesheet, which still
+    gives every size and shape; the text needs them too, because the application stylesheet would otherwise
+    give it the default theme's page and text colours."""
+    p = theme.palette
+    return f"""
+#PageArea, #PageHeader, QScrollArea#PageHeaderScroll {{ background: {p.page}; }}
+NoteEditor {{
+    background: {p.page}; color: {p.text}; selection-background-color: {p.selection};
+    selection-color: {p.selection_text};
+}}
+QPlainTextEdit#TitleField {{
+    color: {p.text}; selection-background-color: {p.selection}; selection-color: {p.selection_text};
+}}
+QPlainTextEdit#TitleField:hover {{ border-color: {p.border}; }}
+QPlainTextEdit#TitleField:focus {{ border: 1px solid {p.focus}; }}
+QLabel#SyncLine, #PageHeader > QLabel[role="secondary"] {{ color: {p.text_secondary}; }}
+QLabel#SyncLine[state="needs_review"], QLabel#SyncLine[state="offline_or_stalled"] {{
+    color: {p.warning_text};
+}}
+#AuthoringBar QToolButton {{ color: {p.text_secondary}; }}
+#AuthoringBar QToolButton:hover {{ background: {p.hover}; color: {p.text}; }}
+#AuthoringBar QToolButton:pressed {{ background: {p.selected}; color: {p.text}; }}
+#AuthoringBar QToolButton:focus {{ border: 1px solid {p.focus}; }}
+#AuthoringBar QToolButton:disabled {{ color: {p.text_muted}; }}
+#AuthoringBar QLabel {{ color: {p.text_secondary}; }}
 """
 
 

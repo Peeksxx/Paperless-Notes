@@ -12,8 +12,17 @@ from dataclasses import dataclass, replace
 from functools import partial
 
 from PySide6.QtCore import QByteArray, QEvent, Qt, QTimer
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut, QShowEvent
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QMainWindow, QSplitter, QVBoxLayout, QWidget
+from PySide6.QtGui import QAction, QCloseEvent, QGuiApplication, QKeySequence, QShortcut, QShowEvent
+from PySide6.QtWidgets import (
+    QApplication,
+    QGraphicsOpacityEffect,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
 from paperless_notes.branding import PRODUCT_NAME
 from paperless_notes.core import pathid
@@ -33,7 +42,7 @@ from paperless_notes.core.security.limits import InputLimits
 from paperless_notes.core.session import ConflictInfo, FlushReason, NoteSession, SessionConfig, SessionDeps
 from paperless_notes.core.settings import Settings, SettingsStore
 from paperless_notes.core.watcher import Activity, ChangeMonitor
-from paperless_notes.core.workspace import WindowState, WorkspaceStore
+from paperless_notes.core.workspace import MAX_GROUPS, WindowState, WorkspaceStore
 from paperless_notes.mdio.adapter import TextDocumentAdapter
 from paperless_notes.mdio.document import SafeTextDocument
 from paperless_notes.mdio.tags import extract_tags
@@ -58,8 +67,9 @@ from paperless_notes.ui.shell.export import Clipboard, Exporter, system_clipboar
 from paperless_notes.ui.shell.help import HelpPanel, HintBubble, pending_hints
 from paperless_notes.ui.shell.labels import note_title
 from paperless_notes.ui.shell.library_actions import LibraryActions
-from paperless_notes.ui.shell.motion import SlideOut
+from paperless_notes.ui.shell.motion import EASE_IN_OUT, SlideOut, animate, fade_in_window
 from paperless_notes.ui.shell.note_tools import NoteTools
+from paperless_notes.ui.shell.page import NotePage
 from paperless_notes.ui.shell.palette import PaletteSources, SearchPalette
 from paperless_notes.ui.shell.settings_panel import SettingsDialog
 from paperless_notes.ui.shell.sidebar import Sidebar
@@ -78,6 +88,8 @@ from paperless_notes.ui.theme.tokens import LIGHT, Theme, theme
 logger = logging.getLogger(__name__)
 
 WEEK_S = 7 * 86400
+THEME_FADE_MS = 240
+FIRST_SIZE = (1280, 860)
 
 
 @dataclass
@@ -106,7 +118,6 @@ class MainWindow(QMainWindow):
         services: ShellServices | None = None,
     ) -> None:
         super().__init__()
-        # The window's worker threads (index, spelling, files) must never run Python's cycle collector.
         self._collector = MainThreadCollector(parent=self)
         self._title_hit: TitleBarHitTest | None = None
         self.services = services or ShellServices(Settings())
@@ -127,6 +138,8 @@ class MainWindow(QMainWindow):
         self.index = self.services.search_index or self._make_index(paths, deps)
         self._dialogs: list[QWidget] = []
         self._hints_started = False
+        self._faded_in = False
+        self._cover: QLabel | None = None
         self.setWindowTitle(PRODUCT_NAME)
         self.resize(1365, 900)
         self.setMinimumSize(720, 480)
@@ -137,6 +150,7 @@ class MainWindow(QMainWindow):
         self._inbox = RequestInbox(paths.ipc_dir)
         self._inbox.received.connect(self._on_request)
         if self._themes is not None:
+            self._themes.about_to_change.connect(self._cover_for_theme)
             self._themes.changed.connect(self.apply_theme)
         self._show_current(None)
         self.index.start(list(self.settings.library_roots))
@@ -196,8 +210,11 @@ class MainWindow(QMainWindow):
             self._authoring_host,
             lambda page: self.tools.page_menu(page),
             self.synced,
+            lambda page: self.tools.export_menu(page),
         )
-        self.spelling = SpellService(self._paths.dictionary_file, self.settings.check_spelling, self)
+        self.spelling = SpellService(
+            self._paths.dictionary_file, self.settings.check_spelling, self, self.settings.autocorrect
+        )
         self.workbench.factory.spelling = self.spelling
         self.spelling.start(self._deps.executor)
         main_layout.addWidget(self.workbench, 1)
@@ -269,14 +286,16 @@ class MainWindow(QMainWindow):
         self.bar.crumbs.folder_requested.connect(self._reveal_folder)
         self.sidebar.home_requested.connect(self.show_home)
         self.sidebar.search_requested.connect(lambda: self.open_palette(""))
+        self.bar.split_requested.connect(self.workbench.new_group)
         self.workbench.active_changed.connect(lambda: self._show_current(None))
-        self.workbench.split.choose_file = self._choose_note_file
         self.workbench.current_changed.connect(self._show_current)
+        self.workbench.groups_changed.connect(self._update_split_button)
         self.workbench.session_state_changed.connect(self._sessions_changed)
         self.workbench.home_changed.connect(self._home_changed)
         self.workbench.new_note_requested.connect(lambda: self._discard(self.library.new_note()))
-        self.workbench.strip.history_requested.connect(self._history_for_tab)
-        self.workbench.strip.copy_path_requested.connect(self._copy_tab_path)
+        self.workbench.history_requested.connect(self.open_history)
+        self.workbench.copy_path_requested.connect(self.library.copy_path)
+        self.workbench.note_theme_requested.connect(self.choose_note_colors)
         home = self.workbench.start
         home.new_note_requested.connect(self.library.new_note)
         home.open_file_requested.connect(self.open_dialog)
@@ -475,9 +494,32 @@ class MainWindow(QMainWindow):
 
     def restore_workspace(self) -> None:
         workspace = self._store.load()
-        if workspace.window.geometry:
-            self.restoreGeometry(QByteArray.fromBase64(workspace.window.geometry.encode("ascii")))
+        restored = bool(workspace.window.geometry) and self.restoreGeometry(
+            QByteArray.fromBase64(workspace.window.geometry.encode("ascii"))
+        )
+        self.fit_to_screen(first_start=not restored)
         self.workbench.restore(workspace)
+
+    def fit_to_screen(self, first_start: bool) -> None:
+        """Keep the window on its screen. A first start opens at a comfortable size in the middle of the
+        screen, not maximized, for the user to enlarge; a remembered size or place that no longer fits the
+        screen shrinks to fit and moves to the middle."""
+        if self.isMaximized() or self.isFullScreen():
+            return
+        screen = QGuiApplication.screenAt(self.geometry().center()) or QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        area = screen.availableGeometry()
+        width, height = self.width(), self.height()
+        if first_start:
+            width = min(FIRST_SIZE[0], round(area.width() * 0.8))
+            height = min(FIRST_SIZE[1], round(area.height() * 0.85))
+        elif area.contains(self.frameGeometry()):
+            return
+        width = max(self.minimumWidth(), min(width, area.width()))
+        height = max(self.minimumHeight(), min(height, area.height()))
+        self.resize(width, height)
+        self.move(area.x() + (area.width() - width) // 2, area.y() + (area.height() - height) // 2)
 
     def _window_state(self) -> WindowState:
         geometry = bytes(self.saveGeometry().toBase64().data()).decode("ascii")
@@ -499,9 +541,6 @@ class MainWindow(QMainWindow):
 
     def _open_note_paths(self) -> list[str]:
         return [s.path for s in self._manager.sessions()]
-
-    def _choose_note_file(self) -> str | None:
-        return self.prompter.choose_file("Open note in the second pane", self.settings.last_used_directory)
 
     def open_palette(self, text: str = "") -> None:
         self.hint.hide()
@@ -558,14 +597,17 @@ class MainWindow(QMainWindow):
         if page is not None:
             self.library.copy_path(page.session.path)
 
-    def _copy_tab_path(self, index: int) -> None:
-        paths = self.workbench.paths()
-        if 0 <= index < len(paths):
-            self.library.copy_path(paths[index])
+    def choose_note_colors(self, page: NotePage) -> None:
+        """Ask for the note's own background and text colours and show them on every page of the note."""
+        current = page.theme.palette
+        choice = self.prompter.ask_note_colors((current.page, current.text), page.colors is not None)
+        if choice is not None:
+            self.workbench.set_note_colors(page.session.path, choice.colors)
 
-    def _history_for_tab(self, index: int) -> None:
-        self.workbench.activate(index)
-        self.open_history()
+    def _update_split_button(self) -> None:
+        self.bar.split_button.setEnabled(
+            self.workbench.active_page() is not None and len(self.workbench.groups) < MAX_GROUPS
+        )
 
     def _reveal_folder(self, path: str) -> None:
         self.sidebar.setVisible(True)
@@ -587,6 +629,7 @@ class MainWindow(QMainWindow):
         title = f"{name}  \N{MIDDLE DOT}  {PRODUCT_NAME}" if name else PRODUCT_NAME
         self.setWindowTitle(title)
         self.sidebar.set_home(self.workbench.home_visible())
+        self._update_split_button()
         if session is not None:
             self.sidebar.select(session.path)
 
@@ -601,7 +644,8 @@ class MainWindow(QMainWindow):
         }
         self.sidebar.set_open_notes(tones)
         self.sidebar.summary.set_summary(*summarize(sessions))
-        self.workbench.strip.update()
+        for group in self.workbench.groups:
+            group.strip.update()
 
     def toast_message(self, text: str) -> None:
         self.toast.show_message(text)
@@ -639,7 +683,7 @@ class MainWindow(QMainWindow):
         return dialog
 
     def open_settings(self) -> SettingsDialog:
-        dialog = SettingsDialog(self.settings, self)
+        dialog = SettingsDialog(self.settings, self, self.theme)
         dialog.changed.connect(self.apply_settings)
         self._keep(dialog)
         dialog.show()
@@ -658,6 +702,7 @@ class MainWindow(QMainWindow):
             self._themes.set_reduced_motion(settings.reduced_motion)
         self.workbench.apply_settings(settings)
         self.spelling.set_enabled(settings.check_spelling)
+        self.spelling.set_autocorrect(settings.autocorrect)
         if settings.custom_frame != previous.custom_frame:
             self.toast_message("The window frame changes the next time Paperless Notes starts.")
         if not settings.show_hints:
@@ -704,6 +749,34 @@ class MainWindow(QMainWindow):
         self._rounder.theme = current
         if not self._native_frame and self.isVisible():
             request_native_decoration(self, self.isMaximized(), current)
+        self._fade_cover()
+
+    def _cover_for_theme(self, upcoming: Theme) -> None:
+        """Lay a picture of the window over it before the theme changes, so the change fades in under it."""
+        if self._cover is not None or not self.isVisible() or upcoming.ms(upcoming.motion.normal_ms) <= 0:
+            return
+        cover = QLabel(self)
+        cover.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        cover.setPixmap(self.grab())
+        cover.setGeometry(self.rect())
+        cover.show()
+        cover.raise_()
+        self._cover = cover
+
+    def _fade_cover(self) -> None:
+        cover = self._cover
+        if cover is None or cover.graphicsEffect() is not None:
+            return
+        effect = QGraphicsOpacityEffect(cover)
+        cover.setGraphicsEffect(effect)
+
+        def done() -> None:
+            if self._cover is cover:
+                self._cover = None
+            cover.deleteLater()
+
+        duration = self.theme.ms(THEME_FADE_MS)
+        animate(cover, 1.0, 0.0, duration, lambda value: effect.setOpacity(float(value)), done, EASE_IN_OUT)
 
     def start_hints(self) -> None:
         self._hints_started = True
@@ -746,17 +819,18 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
 
-    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override
+    def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
+        if not self._faded_in and not event.spontaneous():
+            self._faded_in = True
+            fade_in_window(self, self.theme.ms(self.theme.motion.normal_ms))
         if not self._native_frame:
             request_native_decoration(self, self.isMaximized(), self.theme)
             allow_snap_layouts(self)
         if not self._hints_started:
             QTimer.singleShot(0, self, self.start_hints)
 
-    def nativeEvent(  # noqa: N802 - Qt override
-        self, event_type: QByteArray | bytes | bytearray | memoryview, message: int
-    ) -> object:
+    def nativeEvent(self, event_type: QByteArray | bytes | bytearray | memoryview, message: int) -> object:
         kind = event_type.data() if isinstance(event_type, QByteArray) else bytes(event_type)
         if self._title_hit is not None and kind == b"windows_generic_MSG":
             result = self._title_hit.handle(int(message))
@@ -764,7 +838,7 @@ class MainWindow(QMainWindow):
                 return True, result
         return super().nativeEvent(event_type, message)
 
-    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
+    def changeEvent(self, event: QEvent) -> None:
         kind = event.type()
         if kind == QEvent.Type.ActivationChange:
             active = self.isActiveWindow()
@@ -795,14 +869,14 @@ class MainWindow(QMainWindow):
         unsaved = self._manager.shutdown()
         self.tools.dispose()
         self.index.close()
-        self.workbench.split.dispose()
+        self.workbench.dispose()
         executor = self._deps.executor
         if isinstance(executor, QtIOExecutor):
             executor.drain(5.0)
         self._collector.stop()
         return unsaved
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
+    def closeEvent(self, event: QCloseEvent) -> None:
         unsaved = self.shutdown()
         if unsaved:
             logger.warning("%d note(s) kept in the draft journal at exit", len(unsaved))

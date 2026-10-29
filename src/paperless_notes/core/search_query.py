@@ -62,8 +62,6 @@ def compile_query(text: str) -> CompiledQuery | None:
     """None when the text contains nothing searchable."""
     truncated = len(text) > MAX_QUERY_CHARS
     text = text[:MAX_QUERY_CHARS]
-    # SQLite strings cannot contain NUL, and invisible format controls have no useful search meaning.
-    # Treat them as token boundaries instead of passing them to FTS5 or joining words around them.
     text = "".join(" " if unicodedata.category(ch).startswith("C") else ch for ch in text)
     parts: list[str] = []
     terms: list[str] = []

@@ -1,9 +1,3 @@
-; Per-user installer for Paperless Notes. Build it through tools\build_release.ps1, which passes the
-; version, the verified onedir folder and the output folder. No administrator rights, no downloads, no
-; second startup mechanism. Uninstall removes only what this installer placed in the install folder and
-; its own optional registry entries; notes, settings, drafts, history and all other state under
-; %LOCALAPPDATA%\Paperless Notes and every library folder are never touched.
-
 #ifndef AppVersion
   #error AppVersion must be passed by tools\build_release.ps1
 #endif
@@ -57,7 +51,6 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 Name: "associate"; Description: "Offer {#AppName} in ""Open with"" for .md, .markdown and .txt files (your default app does not change)"; Flags: unchecked
 
 [InstallDelete]
-; An upgrade replaces the bundled runtime completely, so no file from an older version stays mixed in.
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]

@@ -228,7 +228,7 @@ class GlyphEngine(QIconEngine):
     def pixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QPixmap:
         return self.scaledPixmap(size, mode, state, 1.0)
 
-    def scaledPixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State, scale: float) -> QPixmap:  # noqa: N802
+    def scaledPixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State, scale: float) -> QPixmap:
         pixmap = QPixmap(max(1, round(size.width() * scale)), max(1, round(size.height() * scale)))
         pixmap.setDevicePixelRatio(scale)
         pixmap.fill(Qt.GlobalColor.transparent)

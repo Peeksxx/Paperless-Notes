@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from paperless_notes.branding import (  # noqa: E402 - the source tree is added to the path above
+from paperless_notes.branding import (
     COPYRIGHT,
     CREDIT,
     EXE_NAME,
@@ -54,7 +54,6 @@ REQUIRED_LEGAL = (
     "licenses/ESDB-Word-List.txt",
     "licenses/gemoji-MIT.txt",
 )
-# Data the spell checker and emoji suggestions read at run time; the spec bundles the whole folder.
 REQUIRED_DATA = ("_internal/paperless_notes/data/words.txt.gz", "_internal/paperless_notes/data/emoji.tsv")
 LEGAL_FILES = (*REQUIRED_LEGAL, "README.md", "CHANGELOG.md")
 WATCHED_TREES = ("src", "tests", "docs", "tools", "packaging", "assets", "licenses")
@@ -359,7 +358,7 @@ def read_file_version(path: Path) -> tuple[str, str] | None:
 def bundled_modules(exe: Path) -> list[str] | None:
     """Module names in the executable's PYZ archive, or None when PyInstaller is unavailable."""
     try:
-        from PyInstaller.archive.readers import pkg_archive_contents  # type: ignore[import-untyped]
+        from PyInstaller.archive.readers import pkg_archive_contents
     except ImportError:
         return None
     return [str(name) for name in pkg_archive_contents(str(exe))]

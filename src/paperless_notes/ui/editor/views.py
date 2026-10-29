@@ -1,4 +1,4 @@
-"""Every editor view of each open note document (split view).
+"""Every editor view of each open note document (one per tab group showing it).
 
 Two views of one note share one ``QTextDocument`` and so one ``MarkdownHighlighter``: concealment and
 heading sizes are formats of the shared document. This registry creates the highlighter once per
@@ -67,6 +67,7 @@ class DocumentViews(QObject):
         group.connections[id(editor)] = [
             editor.focused.connect(lambda e=editor: self.focus(e)),
             editor.zoom_changed.connect(lambda zoom, e=editor: self._follow_zoom(e, zoom)),
+            editor.width_changed.connect(lambda g=group: self._share_width(g)),
         ]
         if leader is None:
             group.driver = editor
@@ -76,6 +77,12 @@ class DocumentViews(QObject):
             editor.set_zoom(leader.zoom)
         if group.highlighter is not None:
             editor.set_highlighter(group.highlighter)
+        self._share_width(group)
+
+    def _share_width(self, group: _Group) -> None:
+        cap = min((v.natural_width for v in group.views), default=0) if len(group.views) > 1 else 0
+        for view in group.views:
+            view.set_width_cap(cap or None)
 
     def install_highlighter(self, editor: NoteEditor, create: Callable[[], MarkdownHighlighter]) -> None:
         """Give the document its one highlighter (created on first use) and every view a reference."""
@@ -125,12 +132,11 @@ class DocumentViews(QObject):
         for connection in group.connections.pop(id(editor), []):
             QObject.disconnect(connection)
         group.views.remove(editor)
+        editor.set_width_cap(None)
+        self._share_width(group)
         last = not group.views
         if last:
             editor.release_document()
-            # A document adopted by two Qt views can stay C++-owned even after both views detach, so
-            # dropping every Python reference is not enough to destroy it. The session is released in
-            # the same owner-thread turn; queue explicit destruction after that release completes.
             group.document.deleteLater()
         else:
             editor.release_document(detach_highlighter=False)

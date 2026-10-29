@@ -15,7 +15,6 @@ from dataclasses import dataclass, replace
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QDialog,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -32,7 +31,7 @@ from paperless_notes.core.evidence import EvidenceStore
 from paperless_notes.core.history import HistoryStore, Snapshot
 from paperless_notes.core.ledger import LedgerEntry, Origin
 from paperless_notes.core.session import NoteSession
-from paperless_notes.ui.shell.dialogs import Prompter
+from paperless_notes.ui.shell.dialogs import FadeInDialog, Prompter
 from paperless_notes.ui.sync.diff_view import DiffView
 from paperless_notes.ui.theme.tokens import Theme
 
@@ -122,7 +121,7 @@ def build_versions(
     return [replace(v, current=i == newest) for i, v in enumerate(ordered)]
 
 
-class HistoryDialog(QDialog):
+class HistoryDialog(FadeInDialog):
     restored = Signal(str)
 
     def __init__(

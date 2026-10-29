@@ -3,6 +3,8 @@ tabs. Tabs are painted here so a tab being dragged is drawn the same way as the 
 
 from __future__ import annotations
 
+from typing import Any
+
 from PySide6.QtCore import QPointF, QRectF
 from PySide6.QtGui import QColor, QPainter, QPalette, QPen
 from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleOption, QStyleOptionTab, QWidget
@@ -13,6 +15,12 @@ TREE = "LibraryTree"
 TABS = "TabStrip"
 
 
+def option_fields(option: QStyleOption) -> Any:
+    """A style option's plain members (rect, state, palette, text, icon and so on), which the Qt for Python
+    type stubs leave out."""
+    return option
+
+
 def _named(widget: QWidget | None, name: str) -> bool:
     return widget is not None and widget.objectName() == name
 
@@ -21,7 +29,7 @@ class ShellStyle(QProxyStyle):
     def __init__(self) -> None:
         super().__init__("Fusion")
 
-    def drawPrimitive(  # noqa: N802 - Qt override
+    def drawPrimitive(
         self,
         element: QStyle.PrimitiveElement,
         option: QStyleOption,
@@ -47,11 +55,15 @@ class ShellStyle(QProxyStyle):
             and callable(arrow)
             and _named(widget.parentWidget() if widget is not None else None, TABS)
         ):
-            arrow(painter, QRectF(option.rect), element == QStyle.PrimitiveElement.PE_IndicatorArrowLeft)  # type: ignore[attr-defined]
+            arrow(
+                painter,
+                QRectF(option_fields(option).rect),
+                element == QStyle.PrimitiveElement.PE_IndicatorArrowLeft,
+            )
             return
         super().drawPrimitive(element, option, painter, widget)
 
-    def drawControl(  # noqa: N802 - Qt override
+    def drawControl(
         self,
         element: QStyle.ControlElement,
         option: QStyleOption,
@@ -73,7 +85,7 @@ class ShellStyle(QProxyStyle):
             return
         super().drawControl(element, option, painter, widget)
 
-    def pixelMetric(  # noqa: N802 - Qt override
+    def pixelMetric(
         self,
         metric: QStyle.PixelMetric,
         option: QStyleOption | None = None,
@@ -85,9 +97,10 @@ class ShellStyle(QProxyStyle):
 
     @staticmethod
     def _branch(option: QStyleOption, painter: QPainter) -> None:
-        rect = QRectF(option.rect)  # type: ignore[attr-defined]
-        state = option.state  # type: ignore[attr-defined]
-        palette: QPalette = option.palette  # type: ignore[attr-defined]
+        fields = option_fields(option)
+        rect = QRectF(fields.rect)
+        state = fields.state
+        palette: QPalette = fields.palette
         item = bool(state & QStyle.StateFlag.State_Item)
         painter.save()
         if not item:

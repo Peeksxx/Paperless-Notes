@@ -245,7 +245,7 @@ class _Field(QLineEdit):
         self.setPlaceholderText(name)
         self.setClearButtonEnabled(True)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         key = event.key()
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             if self is self._bar.replace_field and not event.modifiers():
@@ -340,7 +340,7 @@ class FindBar(QWidget):
         self.controller.message.connect(self.message.setText)
         self.hide()
 
-    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+    def setVisible(self, visible: bool) -> None:
         if not SlideOut.take(self, visible):
             super().setVisible(visible)
 
@@ -363,7 +363,7 @@ class FindBar(QWidget):
         self.editor.setFocus(Qt.FocusReason.OtherFocusReason)
         self.closed.emit()
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         compact = event.size().width() < 220
         self.previous_button.setText("Prev" if compact else "Previous")

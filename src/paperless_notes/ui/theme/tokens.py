@@ -8,7 +8,7 @@ marks state only. Colours are defined per theme and checked for contrast by the 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 LIGHT = "light"
 DARK = "dark"
@@ -276,3 +276,45 @@ def luminance(color: str) -> float:
 def contrast(foreground: str, background: str) -> float:
     a, b = sorted((luminance(foreground), luminance(background)), reverse=True)
     return (a + 0.05) / (b + 0.05)
+
+
+def blend(start: str, end: str, amount: float) -> str:
+    """The ``#rrggbb`` colour ``amount`` (0 to 1) of the way from ``start`` to ``end``."""
+    a = [int(start[i : i + 2], 16) for i in (1, 3, 5)]
+    b = [int(end[i : i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * amount):02x}" for x, y in zip(a, b, strict=True))
+
+
+def accent_of(current: Palette) -> str:
+    """Which of ``ACCENTS`` a resolved palette was made with."""
+    return next((a for (a, _m), values in _ACCENT_VALUES.items() if values[0] == current.accent), GRAPHITE)
+
+
+def note_theme(base: Theme, background: str, text: str) -> Theme:
+    """``base`` with one note's own page and text colours. What is drawn on the page (secondary and muted
+    text, markers, quotes, code, rules, hover and selection) is mixed from the two; state, find and accent
+    colours come from the light or dark palette that suits the background, and the accent gives way to the
+    text colour where it would be hard to read."""
+    mode = DARK if luminance(background) < luminance(text) else LIGHT
+    ref = palette(mode, accent_of(base.palette))
+    accent = ref.accent if contrast(ref.accent, background) >= 3.0 else text
+    shown = replace(
+        ref,
+        page=background,
+        text=text,
+        text_secondary=blend(text, background, 0.22),
+        text_muted=blend(text, background, 0.35),
+        marker=blend(text, background, 0.5),
+        quote=blend(text, background, 0.2),
+        code_background=blend(background, text, 0.07),
+        border=blend(background, text, 0.12),
+        border_strong=blend(background, text, 0.45),
+        hover=blend(background, text, 0.08),
+        selected=blend(background, text, 0.14),
+        selection=blend(background, text, 0.22),
+        selection_text=text,
+        accent=accent,
+        focus=accent,
+        link=accent,
+    )
+    return replace(base, palette=shown)

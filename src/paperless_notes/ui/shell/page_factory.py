@@ -1,4 +1,4 @@
-"""Builds and tears down the view of one note for a tab or the split pane.
+"""Builds and tears down the view of one note for a tab in any tab group.
 
 ``open`` acquires the note's one session from the manager (a second view of the same path gets the same
 session, adapter and document), creates an editor on that document, registers it with ``DocumentViews``
@@ -49,6 +49,7 @@ class PageFactory:
         validate_title: Callable[[str, str], NameCheck] | None,
         authoring_host: Callable[[NoteSession], AuthoringHost] | None,
         page_menu: Callable[[NotePage], QMenu] | None,
+        export_menu: Callable[[NotePage], QMenu] | None = None,
     ) -> None:
         self.manager = manager
         self.views = views
@@ -61,6 +62,7 @@ class PageFactory:
         self._validate_title = validate_title
         self._authoring_host = authoring_host
         self._page_menu = page_menu
+        self._export_menu = export_menu
         self._connections: dict[int, list[QMetaObject.Connection]] = {}
         self.spelling: SpellService | None = None
 
@@ -89,6 +91,8 @@ class PageFactory:
             host,
             release=self.views.detach,
             menu=self._page_menu,
+            export_menu=self._export_menu,
+            colors=self._local.note_colors(session.path),
         )
         self.views.attach(editor)
         self._connections[id(page)] = [

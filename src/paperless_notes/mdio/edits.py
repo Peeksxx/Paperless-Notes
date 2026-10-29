@@ -41,6 +41,9 @@ _LITERAL = Style.CODE | Style.CODE_BLOCK | Style.URL | Style.HTML | Style.META
 _LIST_ITEM = re.compile(r"([ \t]*)([-+*]|\d{1,9}[.)])([ \t]+|$)(\[[ xX]\](?:[ \t]+|$))?")
 _TASK_LINE = re.compile(r"[ \t]*(?:>[ \t]?)*[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+\[([ xX])\](?:[ \t]|$)")
 _FENCE_LINE = re.compile(r" {0,3}(`{3,}|~{3,})")
+_QUOTE_PREFIX = re.compile(r"(?:[ \t]{0,3}>[ \t]?)+")
+_EMPHASIS = Style.STRONG | Style.EMPHASIS | Style.STRIKE
+_PUNCTUATION = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 
 ONE_LINE = "Select text within one line to use this command."
 IN_CODE = "This does not apply inside code, a link address or front matter."
@@ -132,6 +135,86 @@ def _stray_markers(text: str, spans: list[Span], start: int, end: int, char: str
     return any(text[i] == char and not covered[i] for i in range(start, end))
 
 
+@dataclass(frozen=True, slots=True)
+class OpenStyle:
+    """A bold, italic or strikethrough run on one line: ``start`` is its opening marker, ``end`` the end of
+    its closing marker, ``name`` is b, i or s."""
+
+    start: int
+    end: int
+    opener: str
+    closer: str
+    name: str
+
+    @property
+    def inner_start(self) -> int:
+        return self.start + len(self.opener)
+
+    @property
+    def inner_end(self) -> int:
+        return self.end - len(self.closer)
+
+
+def open_styles(block: QTextBlock, index: int) -> list[OpenStyle]:
+    """The bold, italic and strikethrough runs whose text holds ``index`` (its edges included), outermost
+    first."""
+    text = block.text()
+    spans = line_result(block).spans
+    found: list[OpenStyle] = []
+    for span in spans:
+        if not span.style & _EMPHASIS or span.style & Style.MARKER:
+            continue
+        opening = next((m for m in spans if m.style & Style.MARKER and m.start == span.start), None)
+        closing = next((m for m in spans if m.style & Style.MARKER and m.end == span.end), None)
+        if opening is None or closing is None or opening.end > closing.start:
+            continue
+        if opening.end <= index <= closing.start:
+            name = "b" if span.style & Style.STRONG else "i" if span.style & Style.EMPHASIS else "s"
+            found.append(
+                OpenStyle(
+                    span.start, span.end, text[span.start : opening.end], text[closing.start : span.end], name
+                )
+            )
+    found.sort(key=lambda s: (s.start, -s.end))
+    return found
+
+
+def split_point(block: QTextBlock, index: int) -> tuple[int, str, str]:
+    """Where to break the line at ``index`` and the markers that keep bold, italic and strikethrough
+    working on both sides: (index, closers, openers). At the very start or end of a run's text the break
+    moves outside the run instead, so no empty pair is left behind."""
+    styles = open_styles(block, index)
+    for style in styles:
+        if index == style.inner_start and index < style.inner_end:
+            index = style.start
+        elif index == style.inner_end and index > style.inner_start:
+            index = style.end
+    inside = [s for s in open_styles(block, index) if s.inner_start < index < s.inner_end]
+    closers = "".join(s.closer for s in reversed(inside))
+    openers = "".join(s.opener for s in inside)
+    return index, closers, openers
+
+
+def _flanking_range(text: str, start: int, end: int) -> tuple[int, int]:
+    """Shrink ``start:end`` so markers placed around it work in CommonMark: a marker cannot sit between
+    punctuation inside and a letter or digit outside, so that punctuation stays outside the markers."""
+    after = text[end] if end < len(text) else " "
+    if after.strip() and after not in _PUNCTUATION:
+        cut = end
+        while cut > start and text[cut - 1] in _PUNCTUATION:
+            cut -= 1
+        if start < cut < end:
+            end = cut
+    before = text[start - 1] if start > 0 else " "
+    if before.strip() and before not in _PUNCTUATION:
+        cut = start
+        while cut < end and text[cut] in _PUNCTUATION:
+            cut += 1
+        if start < cut < end:
+            start = cut
+    return start, end
+
+
 def toggle_inline(cursor: QTextCursor, kind: str) -> EditResult:
     """Wrap the selection in a marker pair, or unwrap an exactly matching pair; with no selection insert
     the pair and place the caret inside."""
@@ -185,6 +268,8 @@ def toggle_inline(cursor: QTextCursor, kind: str) -> EditResult:
         return refuse("The selection contains backticks, so inline code would be ambiguous.")
     if _stray_markers(text, spans, start, end, marker[0]):
         return refuse(OVERLAP)
+    if kind != "code":
+        start, end = _flanking_range(text, start, end)
     with edit_block(document):
         insert_text(document, position_of(block, end), marker)
         insert_text(document, position_of(block, start), marker)
@@ -428,9 +513,119 @@ def continue_list(cursor: QTextCursor) -> EditResult | None:
         if marker[0].isdigit():
             marker = f"{int(marker[:-1]) + 1}{marker[-1]}"
         prefix = indent + marker + " " + ("[ ] " if task else "")
-        position = position_of(block, caret)
-        insert_text(document, position, "\n" + prefix)
-    return done(position + 1 + len(prefix))
+        return _break_at(document, block, caret, prefix)
+
+
+def _break_at(document: QTextDocument, block: QTextBlock, caret: int, prefix: str) -> EditResult:
+    """Break the line at ``caret`` and start the new line with ``prefix``; bold, italic and
+    strikethrough that run across the caret are closed before the break and reopened after it."""
+    index, closers, openers = split_point(block, caret)
+    position = position_of(block, index)
+    with edit_block(document):
+        insert_text(document, position, closers + "\n" + prefix + openers)
+    skipped = caret - index if index < caret else 0
+    return done(position + len(closers) + 1 + len(prefix) + len(openers) + skipped)
+
+
+def break_line(cursor: QTextCursor) -> EditResult | None:
+    """Enter: a list item continues the list and a quote continues the quote (an empty one ends it), and
+    bold, italic or strikethrough split by the break stay formatted on both lines, as in a word processor.
+    None means an ordinary line break."""
+    if cursor.hasSelection():
+        return None
+    block = cursor.block()
+    if in_raw_region(block):
+        return None
+    listed = continue_list(cursor)
+    if listed is not None or _LIST_ITEM.match(block.text()):
+        return listed
+    text = block.text()
+    caret = index_of(block, cursor.position())
+    document = cursor.document()
+    quote = _QUOTE_PREFIX.match(text)
+    prefix = ""
+    if quote is not None and caret >= quote.end():
+        if not text[quote.end() :].strip():
+            with edit_block(document):
+                replace_text(document, block.position(), block.position() + block.length() - 1, "")
+            return done(block.position())
+        prefix = quote.group().rstrip() + " "
+    index, closers, _ = split_point(block, caret)
+    if not prefix and not closers and index == caret:
+        return None
+    return _break_at(document, block, caret, prefix)
+
+
+def join_lines(cursor: QTextCursor, forward: bool) -> EditResult | None:
+    """Backspace at the start of a line's text or Delete at the end of it, when the two lines were split
+    inside bold, italic or strikethrough: the closing and reopening markers (and a list or quote marker
+    the split added) go too, so the run is whole again, the way it was before Enter. None means the
+    key does what it always does."""
+    if cursor.hasSelection():
+        return None
+    block = cursor.block()
+    index = index_of(block, cursor.position())
+    first, second = (block, block.next()) if forward else (block.previous(), block)
+    if not first.isValid() or not second.isValid() or in_raw_region(first) or in_raw_region(second):
+        return None
+    above, below = first.text(), second.text()
+    closing = _edge_markers(above, line_result(first).spans, at_end=True)
+    lead = _continuation(below)
+    opening = _edge_markers(below[lead:], line_result(second).spans, at_end=False, base=lead)
+    if closing is None or opening is None or closing[1] not in (opening[1], opening[1][::-1]):
+        return None
+    cut, kept = closing[0], opening[0]
+    if forward and index not in (cut, len(above)):
+        return None
+    if not forward and index not in (kept, 0 if lead == 0 else -1):
+        return None
+    if cut == 0 or kept == len(below) or above[cut - 1].isspace() or below[kept].isspace():
+        return None
+    document = cursor.document()
+    start = position_of(first, cut)
+    with edit_block(document):
+        replace_text(document, start, position_of(second, kept), "")
+    return done(start)
+
+
+def _continuation(text: str) -> int:
+    """Length of the list or quote marker at the start of a line (0 when there is none)."""
+    listed = _LIST_ITEM.match(text)
+    if listed is not None:
+        return listed.end()
+    quoted = _QUOTE_PREFIX.match(text)
+    return quoted.end() if quoted is not None else 0
+
+
+def _edge_markers(text: str, spans: list[Span], at_end: bool, base: int = 0) -> tuple[int, str] | None:
+    """Bold, italic or strikethrough markers touching the end (or the start) of ``text``: where they begin
+    (or end) and the markers themselves, or None. ``base`` is where ``text`` starts in the line the spans
+    describe; the position returned is in line offsets."""
+    spans = [Span(s.start - base, s.end - base, s.style) for s in spans if s.end > base]
+    emphasis = [s for s in spans if s.style & _EMPHASIS and not s.style & Style.MARKER]
+    marked = sorted(
+        (
+            m
+            for m in spans
+            if m.style & Style.MARKER
+            and not m.style & (Style.ESCAPE | Style.HARD_BREAK)
+            and any(e.start == m.start or e.end == m.end for e in emphasis)
+        ),
+        key=lambda m: m.start,
+    )
+    if at_end:
+        edge = len(text)
+        for m in reversed(marked):
+            if m.end != edge:
+                break
+            edge = m.start
+        return None if edge == len(text) else (edge, text[edge:])
+    edge = 0
+    for m in marked:
+        if m.start != edge:
+            break
+        edge = m.end
+    return None if edge == 0 else (edge + base, text[:edge])
 
 
 def _indent_unit(marker: str, indent: str) -> int:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -103,20 +103,34 @@ SECTIONS: tuple[tuple[str, str], ...] = (
         "pastes plain text. Each command is one undo step.",
     ),
     (
+        "Spelling",
+        "Misspelled words are underlined. An obvious typo, such as teh or recieve, is corrected when the "
+        "word ends, and a note under it shows the change: Esc puts your word back this time, and the same "
+        "typo is still corrected next time; Shift+Esc puts it back and adds it to your dictionary, and "
+        "Ctrl+Z also undoes the correction. Names and less certain words are only underlined: rest the "
+        "pointer on one, or press Ctrl+Period with the caret in it, for suggestions, Add to dictionary and "
+        "Ignore. Right-clicking the word shows the same. Settings turns spelling or the automatic "
+        "corrections off. The word list and your dictionary stay on this PC.",
+    ),
+    (
         "Tags and outline",
         "A tag is # followed by letters or digits, such as #project or #to-read; tags in code, links and "
         "HTML do not count. Type # in the palette to list every tag with its number of notes. The outline "
         "panel (Ctrl+Shift+O) lists the headings of the note you are in; @ in the palette jumps to one.",
     ),
     (
-        "Find, split view and export",
-        "The Note menu above the text holds Find in note (Ctrl+F), Replace in note (Ctrl+H), Outline, Split "
-        "view, Export as HTML, PDF or plain text, Copy as Markdown and Copy as rich text. In the find bar, "
-        "Enter and F3 go to the next match, Shift+Enter and Shift+F3 to the previous one, and Escape closes "
-        "it; Replace all is one undo step. Split view shows a second note, or the same note, side by side; "
-        "both views of one note share its text and saving, and F6 moves between the panes. Exports never "
-        "change the note, never load anything from the internet, and include only images from the note's "
-        "assets folder.",
+        "Find, tab groups, colours and export",
+        "The Note menu above the text holds Find in note (Ctrl+F), Replace in note (Ctrl+H) and Outline. In "
+        "the find bar, Enter and F3 go to the next match, Shift+Enter and Shift+F3 to the previous one, and "
+        "Escape closes it; Replace all is one undo step. The button beside the search box, or "
+        "Ctrl+Shift+\\, opens the note in a new tab group beside it, up to three; drag a tab onto another "
+        "group or right-click it and choose Move to group. A group closes with its last tab, and F6 moves "
+        "to the next group. Both views of one note share its text and saving. Format, Theme gives a note "
+        "its own background and text colours; the theme in Settings is the default for the rest. The "
+        "Export menu holds Export as HTML, PDF or plain text, Export as shown (a PDF, an image or a web "
+        "page that looks the way the note looks here), Copy as Markdown and Copy as rich text; the web page "
+        "and PDF follow the note's colours. Exports never change the note, never load anything from the "
+        "internet, and include only images from the note's assets folder.",
     ),
     (
         "Keyboard",
@@ -126,7 +140,9 @@ SECTIONS: tuple[tuple[str, str], ...] = (
         "Zoom. Ctrl+click Open a link. F1 Help. Ctrl+B Bold. Ctrl+I Italic. Ctrl+Shift+X Strikethrough. "
         "Ctrl+E Inline code. Ctrl+K Link. Ctrl+Alt+1 to 3 Headings. Alt+Up and Alt+Down Move lines. "
         "Shift+Alt+Down Duplicate lines. Ctrl+Shift+F Search notes. Ctrl+G Go to line. Ctrl+Shift+O Outline. "
-        "Ctrl+F Find. Ctrl+H Replace. F3 and Shift+F3 Next and previous match. F6 Other pane. Every shortcut "
+        "Ctrl+F Find. Ctrl+H Replace. F3 and Shift+F3 Next and previous match. Ctrl+Shift+\\ New tab group. "
+        "F6 Next tab group. Ctrl+Period "
+        "Spelling suggestions. Every shortcut "
         "also has a button, a menu item or a palette command.",
     ),
 )
@@ -174,7 +190,7 @@ class HelpPanel(QFrame):
         p = theme.palette
         self.close_button.setIcon(glyph_icon("close", p.text_secondary, p.text))
 
-    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+    def setVisible(self, visible: bool) -> None:
         if not SlideOut.take(self, visible):
             super().setVisible(visible)
 
@@ -266,12 +282,22 @@ class HintBubble(FloatingPanel):
         self.setAccessibleName(f"Tip: {hint.title}. {hint.text}")
         self.adjustSize()
         anchor = target.mapTo(self._host, QPoint(0, target.height() + 2))
-        x = max(0, min(anchor.x() - self.SHADOW, self._host.width() - self.width()))
-        y = max(0, min(anchor.y() - self.SHADOW + 8, self._host.height() - self.height()))
+        bounds = self.visible_area()
+        x = max(bounds.left(), min(anchor.x() - self.SHADOW, bounds.right() + 1 - self.width()))
+        y = max(bounds.top(), min(anchor.y() - self.SHADOW + 8, bounds.bottom() + 1 - self.height()))
         self.move(x, y)
         self.show()
         self.raise_()
         fade_in(self, self._theme.ms(self._theme.motion.normal_ms), rise=6)
+
+    def visible_area(self) -> QRect:
+        """The part of the host the user can see: a window larger than its screen hides its far edge."""
+        bounds = self._host.rect()
+        screen = self._host.screen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            bounds = bounds.intersected(QRect(self._host.mapFromGlobal(area.topLeft()), area.size()))
+        return bounds
 
     def _dismiss(self) -> None:
         if self.hint is not None:

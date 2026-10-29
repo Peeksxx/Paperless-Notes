@@ -1,8 +1,8 @@
 """Note tools wired to the shell: search and tags (through the search palette), the outline, find and
-replace, split view and export. Every tool has a visible route (the search box in the app bar, the outline
-panel, the Note menu above each note's text), a command in the palette and, where one exists, a shortcut.
-Actions from a pane's own Note menu act on that pane; commands and shortcuts act on the active pane (the
-one focused last).
+replace, tab groups and export. Every tool has a visible route (the search box in the app bar, the outline
+panel, the Note and Export menus above each note's text), a command in the palette and, where one exists, a
+shortcut. Actions from a note's own menus act on that note's tab group; commands and shortcuts act on the
+active group (the one focused last).
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from paperless_notes.mdio.find import Finder, FindOptions
 from paperless_notes.mdio.outline import Outline, outline_of_document
 from paperless_notes.ui.editor.note_editor import NoteEditor
 from paperless_notes.ui.shell.export import Exporter, ExportFormat, ExportResult
+from paperless_notes.ui.shell.export_shown import ShownView
+from paperless_notes.ui.shell.labels import note_title
 from paperless_notes.ui.shell.motion import SlideOut
 from paperless_notes.ui.shell.page import NotePage
 from paperless_notes.ui.shell.tool_panel import ToolPanel
@@ -105,9 +107,22 @@ class NoteTools(QObject):
                 "Shift+F3",
                 (),
             ),
-            ("split_open", "Open split view", self.open_split, "", ("pane", "side by side", "second")),
-            ("split_close", "Close split view", self.close_split, "", ("pane", "single")),
-            ("switch_pane", "Switch to the other pane", self.workbench.split.focus_other, "F6", ("split",)),
+            (
+                "new_group",
+                "Open in new tab group",
+                self.workbench.new_group,
+                "Ctrl+Shift+\\",
+                ("split", "side by side", "pane", "group"),
+            ),
+            ("close_group", "Close tab group", self.workbench.close_group, "", ("split", "pane", "single")),
+            ("next_group", "Go to next tab group", self.workbench.focus_next_group, "F6", ("split", "pane")),
+            (
+                "note_theme",
+                "Note theme",
+                lambda: self._on_active(self.workbench.note_theme_requested.emit),
+                "",
+                ("colour", "color", "background", "text"),
+            ),
             ("export_html", "Export as HTML", lambda: self._export_active(ExportFormat.HTML), "", ("save",)),
             ("export_pdf", "Export as PDF", lambda: self._export_active(ExportFormat.PDF), "", ("print",)),
             (
@@ -116,6 +131,27 @@ class NoteTools(QObject):
                 lambda: self._export_active(ExportFormat.TEXT),
                 "",
                 ("txt", "save"),
+            ),
+            (
+                "export_shown_pdf",
+                "Export as shown: PDF",
+                lambda: self._export_active(ExportFormat.SHOWN_PDF),
+                "",
+                ("print", "theme", "look", "letter"),
+            ),
+            (
+                "export_shown_png",
+                "Export as shown: image",
+                lambda: self._export_active(ExportFormat.SHOWN_PNG),
+                "",
+                ("png", "picture", "screenshot"),
+            ),
+            (
+                "export_shown_html",
+                "Export as shown: web page",
+                lambda: self._export_active(ExportFormat.SHOWN_HTML),
+                "",
+                ("html", "theme", "look"),
             ),
             (
                 "copy_markdown",
@@ -133,8 +169,7 @@ class NoteTools(QObject):
             ),
         ]
 
-    def page_menu(self, page: NotePage) -> QMenu:
-        """The Note menu above one note's text; its actions act on that pane."""
+    def _menu(self, page: NotePage) -> tuple[QMenu, Callable[[str, Callable[[], object], str], None]]:
         menu = QMenu(page)
         menu.setToolTipsVisible(True)
 
@@ -143,6 +178,11 @@ class NoteTools(QObject):
             action.setToolTip(tip)
             action.triggered.connect(lambda _c=False: self._for(page, handler))
 
+        return menu, add
+
+    def page_menu(self, page: NotePage) -> QMenu:
+        """The Note menu above one note's text; its actions act on that note's tab group."""
+        menu, add = self._menu(page)
         add("Find in note\tCtrl+F", lambda: page.find_bar.open_bar(False), "Find text in this note")
         add("Replace in note\tCtrl+H", lambda: page.find_bar.open_bar(True), "Find and replace in this note")
         add(
@@ -150,13 +190,11 @@ class NoteTools(QObject):
             lambda: self.show_panel("outline"),
             "Headings of this note in the side panel",
         )
-        split = menu.addAction("Split view")
-        split.setToolTip("Show a second note side by side, or close the second pane")
-        split.triggered.connect(lambda _c=False: self._toggle_split(page))
-        menu.aboutToShow.connect(
-            lambda: split.setText("Close split view" if self.workbench.split.is_open() else "Open split view")
-        )
-        menu.addSeparator()
+        return menu
+
+    def export_menu(self, page: NotePage) -> QMenu:
+        """The Export menu above one note's text: every way to save or copy that note."""
+        menu, add = self._menu(page)
         add("Export as HTML...", lambda: self.export(page, ExportFormat.HTML), "Save a web page of this note")
         add("Export as PDF...", lambda: self.export(page, ExportFormat.PDF), "Save a PDF of this note")
         add(
@@ -164,12 +202,27 @@ class NoteTools(QObject):
             lambda: self.export(page, ExportFormat.TEXT),
             "Save readable text without Markdown marks",
         )
+        shown = menu.addMenu("Export as shown")
+        shown.setToolTipsVisible(True)
+        shown.menuAction().setToolTip("Save the note as it looks here: as a PDF, an image or a web page")
+        for label, fmt, tip in (
+            ("PDF...", ExportFormat.SHOWN_PDF, "US Letter pages in this theme, font, zoom and column"),
+            ("Image (PNG)...", ExportFormat.SHOWN_PNG, "One long picture of the note as it looks here"),
+            (
+                "Web page (HTML)...",
+                ExportFormat.SHOWN_HTML,
+                "A web page in this theme, font, zoom and column",
+            ),
+        ):
+            action = shown.addAction(label)
+            action.setToolTip(tip)
+            action.triggered.connect(lambda _c=False, f=fmt: self._for(page, lambda: self.export(page, f)))
         add("Copy as Markdown", lambda: self.copy_markdown(page), "Copy the exact Markdown source")
         add("Copy as rich text", lambda: self.copy_rich(page), "Copy formatted text for mail and documents")
         return menu
 
     def _for(self, page: NotePage, handler: Callable[[], object]) -> None:
-        self.workbench.split.activate(page)
+        self.workbench.activate_page(page)
         handler()
 
     def _on_active(self, handler: Callable[[NotePage], object]) -> None:
@@ -201,30 +254,11 @@ class NoteTools(QObject):
         for widget in self._others:
             widget.hide()
 
-    def open_split(self) -> None:
-        page = self.workbench.active_page()
-        self.workbench.split.open(page.session.path if page is not None else None)
-
-    def close_split(self) -> None:
-        self.workbench.split.close()
-
-    def _toggle_split(self, page: NotePage) -> None:
-        split = self.workbench.split
-        if split.is_open():
-            split.close()
-        else:
-            split.open(page.session.path)
-
-    def _open_in_active_pane(self, path: str) -> NotePage | None:
-        split = self.workbench.split
-        if split.secondary_active():
-            return split.show_note(path)
-        self.workbench.open_path(path)
-        return self.workbench.current_page()
-
     def open_result(self, path: str, terms: tuple[str, ...]) -> None:
-        """Open a search result in the active pane and select its first match; the note is not changed."""
-        page = self._open_in_active_pane(path)
+        """Open a search result in the active tab group and select its first match; the note is not
+        changed."""
+        self.workbench.open_path(path)
+        page = self.workbench.active_page()
         if page is None:
             return
         session = page.session
@@ -287,7 +321,10 @@ class NoteTools(QObject):
     def export(self, page: NotePage, fmt: ExportFormat) -> None:
         session = page.session
         self._toast(f"Exporting {ntpath.basename(session.path)} as {fmt.label}...")
-        self.exporter.export(session.path, session.buffer_text(), fmt, self._exported, page.editor.note_font)
+        view = ShownView.of(page.editor, note_title(session.path))
+        self.exporter.export(
+            session.path, session.buffer_text(), fmt, self._exported, page.editor.note_font, view, page.colors
+        )
 
     def _export_active(self, fmt: ExportFormat) -> None:
         self._on_active(lambda page: self.export(page, fmt))

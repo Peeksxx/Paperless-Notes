@@ -67,8 +67,10 @@ from paperless_notes.core.search_query import compile_query
 from paperless_notes.mdio.outline import Outline
 from paperless_notes.ui.shell.commands import CommandRegistry
 from paperless_notes.ui.shell.labels import location_of, note_title
+from paperless_notes.ui.shell.motion import clear_effect
 from paperless_notes.ui.shell.widgets import caption_font, meta_font, paint_keycaps, paint_shadow
 from paperless_notes.ui.theme.icons import draw_glyph
+from paperless_notes.ui.theme.style import option_fields
 from paperless_notes.ui.theme.tokens import Theme
 
 NOTES, COMMANDS, TAGS, HEADINGS, LINE, HELP, SKIPPED = (
@@ -141,7 +143,7 @@ class _Delegate(QStyledItemDelegate):
         super().__init__(palette)
         self._palette = palette
 
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:  # noqa: N802
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
         item = index.data(ITEM_ROLE)
         if not isinstance(item, PaletteItem):
             return QSize(100, 34)
@@ -157,8 +159,9 @@ class _Delegate(QStyledItemDelegate):
             return
         theme = self._palette.theme
         p = theme.palette
-        rect = QRectF(option.rect)  # type: ignore[attr-defined]
-        state = option.state  # type: ignore[attr-defined]
+        fields = option_fields(option)
+        rect = QRectF(fields.rect)
+        state = fields.state
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if item.header:
@@ -272,7 +275,7 @@ class _Footer(QWidget):
         self.status = text
         self.update()
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         theme = self._palette.theme
         p = theme.palette
         painter = QPainter(self)
@@ -311,11 +314,11 @@ class _Footer(QWidget):
     def _region_at(self, pos: QPoint) -> tuple[QRect, str, str] | None:
         return next((r for r in self._regions if r[0].contains(pos)), None)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         hit = self._region_at(event.position().toPoint())
         self.setCursor(Qt.CursorShape.PointingHandCursor if hit else Qt.CursorShape.ArrowCursor)
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         hit = self._region_at(event.position().toPoint())
         if hit is not None and event.button() == Qt.MouseButton.LeftButton:
             self.prefix_chosen.emit(hit[1])
@@ -332,7 +335,7 @@ class _Footer(QWidget):
 
 
 class _List(QListView):
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def sizeHint(self) -> QSize:
         model = self.model()
         rows = model.rowCount() if model is not None else 0
         height = sum(self.sizeHintForRow(r) for r in range(rows))
@@ -825,7 +828,7 @@ class SearchPalette(QWidget):
             if row in (0, count - 1):
                 return
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self._host and event.type() == QEvent.Type.Resize and self.isVisible():
             self._place()
         if watched is self.field and event.type() == QEvent.Type.KeyPress and isinstance(event, QKeyEvent):
@@ -893,21 +896,21 @@ class SearchPalette(QWidget):
         animation.setDuration(duration)
         animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        def step(value: object) -> None:
-            progress = float(value)  # type: ignore[arg-type]
+        def step(value: float) -> None:
+            progress = float(value)
             effect.setOpacity(progress)
             self.move(final.x(), final.y() - round(6 * (1 - progress)))
 
         def done() -> None:
             self.move(final)
-            self.setGraphicsEffect(None)  # type: ignore[arg-type]
+            clear_effect(self)
 
         animation.valueChanged.connect(step)
         animation.finished.connect(done)
         self._animation = animation
         animation.start(QVariantAnimation.DeletionPolicy.DeleteWhenStopped)
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         t = self.theme
         p = t.palette
         painter = QPainter(self)

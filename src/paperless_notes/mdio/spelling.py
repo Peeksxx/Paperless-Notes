@@ -6,6 +6,12 @@ A word is known when it is in the list, when it is a capitalized form of a liste
 a sentence), when it is a known word followed by 's, or when the user added it. Words with digits or
 underscores, all-capital words, words with capitals inside (CamelCase), single letters, and chunks that look
 like addresses, paths, tags, mentions or emoji shortcodes are never checked.
+
+Only obvious typos are corrected as you type: the fix must be one common word, clearly ahead of every other
+suggestion, and reached by a slip that rarely turns a real word into another one (two letters swapped, one
+vowel for another, a doubled letter missed or typed twice, a letter left out of a long word). Short words,
+names and anything less certain are only underlined, because abbreviations and slang (json, omw, yeet) sit
+one letter away from common words.
 """
 
 from __future__ import annotations
@@ -28,6 +34,20 @@ _CHUNK = re.compile(r"\S+")
 _WORD = re.compile(r"[A-Za-z](?:[A-Za-z'\N{RIGHT SINGLE QUOTATION MARK}]*[A-Za-z])?")
 _SKIP_CHUNK = re.compile(r"[\d_/\\@]|://|^www\.|^#|[A-Za-z]\.[A-Za-z]|^:[\w+-]+:?$")
 _ROWS = ("qwertyuiop", "asdfghjkl", "zxcvbnm")
+_VOWELS = frozenset("aeiou")
+_SHORT_WORDS = (
+    "the and you can not for but are was has had her his him she who how why now its our out one all any did "
+    "get got too two see say new use day yes off own may let put"
+)
+SHORT_FIXES = frozenset(_SHORT_WORDS.split())
+AUTO_MIN_LETTERS = {"swap": 4, "vowel": 4, "double": 4, "single": 5, "missing": 7}
+_OPENERS = r"[*_~\"(\N{LEFT DOUBLE QUOTATION MARK}]*"
+_LINE_START = re.compile(
+    r"^\s*(?:>\s*)*(?:(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?|#{1,6}\s+)?" + _OPENERS + "$"
+)
+_SENTENCE_END = re.compile(
+    r"[.!?][\"')\]\N{RIGHT DOUBLE QUOTATION MARK}\N{RIGHT SINGLE QUOTATION MARK}*_~]*\s+" + _OPENERS + "$"
+)
 
 
 def _neighbours() -> dict[str, str]:
@@ -47,6 +67,43 @@ _NEAR = _neighbours()
 
 def normalize(word: str) -> str:
     return word.translate(_APOSTROPHES)
+
+
+def starts_sentence(before: str) -> bool:
+    """Whether a word typed after ``before`` (the line up to the word) opens a sentence: at the start of the
+    line after any list, quote, task or heading marker, or after a full stop, question or exclamation mark."""
+    return bool(_LINE_START.match(before) or _SENTENCE_END.search(before))
+
+
+def edit_kind(word: str, fix: str) -> str:
+    """How ``fix`` differs from ``word`` when they are one edit apart: ``swap`` (two neighbouring letters
+    exchanged), ``vowel`` (one vowel for another), ``double`` (a letter that should be doubled), ``single`` (a
+    doubled letter that should be single), ``missing`` (a letter left out before the end), ``trailing`` (a
+    letter left off the end), ``extra`` (one letter too many) or ``other``."""
+    if len(word) == len(fix):
+        diff = [i for i in range(len(word)) if word[i] != fix[i]]
+        if len(diff) == 2 and diff[1] == diff[0] + 1:
+            first, second = diff
+            if word[first] == fix[second] and word[second] == fix[first]:
+                return "swap"
+        if len(diff) == 1 and word[diff[0]] in _VOWELS and fix[diff[0]] in _VOWELS:
+            return "vowel"
+        return "other"
+    if len(fix) == len(word) + 1:
+        for i in range(len(fix)):
+            if fix[:i] + fix[i + 1 :] == word:
+                if fix[i] in _beside(fix, i):
+                    return "double"
+                return "trailing" if i == len(word) else "missing"
+    if len(word) == len(fix) + 1:
+        for i in range(len(word)):
+            if word[:i] + word[i + 1 :] == fix:
+                return "single" if word[i] in _beside(word, i) else "extra"
+    return "other"
+
+
+def _beside(text: str, index: int) -> str:
+    return text[max(0, index - 1) : index] + text[index + 1 : index + 2]
 
 
 def words_to_check(text: str, skip: Iterable[tuple[int, int]] = ()) -> Iterator[tuple[int, int, str]]:
@@ -161,6 +218,33 @@ class Speller:
 
     def best(self, word: str) -> str | None:
         return self.check(word)[0]
+
+    def autocorrection(self, word: str, sentence_start: bool = False) -> str | None:
+        """The correction to make as ``word`` is typed, or None to leave it underlined. A capitalized word is
+        taken for a name unless it opens a sentence; three-letter words are fixed only when two letters are
+        swapped and the fix is one of ``SHORT_FIXES``."""
+        w = normalize(word)
+        lower = w.lower()
+        if len(w) < 3 or not (w.isascii() and w.isalpha()) or self.known(w):
+            return None
+        if w != lower and not (sentence_start and w[1:] == lower[1:]):
+            return None
+        ranked = self._ranked(lower, 0.0)
+        if not ranked:
+            return None
+        key, form = ranked[0]
+        distance, _weight, tier = key[:3]
+        if distance != 1 or tier != 0 or form != form.lower():
+            return None
+        if len(ranked) > 1 and ranked[1][0][:3] == key[:3]:
+            return None
+        kind = edit_kind(lower, form)
+        if len(lower) == 3:
+            allowed = kind == "swap" and form in SHORT_FIXES
+        else:
+            minimum = AUTO_MIN_LETTERS.get(kind)
+            allowed = minimum is not None and len(lower) >= minimum
+        return match_case(w, form) if allowed else None
 
 
 def match_case(original: str, suggestion: str) -> str:

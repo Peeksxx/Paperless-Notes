@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt
 from PySide6.QtGui import (
     QColor,
     QEnterEvent,
@@ -102,7 +102,7 @@ class ToneLabel(QLabel):
         self._theme = theme
         self._color.jump(QColor(self._target()))
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         painter = QPainter(self)
         painter.setFont(self.font())
         painter.setPen(self.color())
@@ -206,16 +206,21 @@ class FloatingPanel(QFrame):
         s = self.SHADOW
         return (s + horizontal, s - 4 + vertical, s + horizontal, s + 4 + vertical)
 
+    def panel_rect(self) -> QRect:
+        """The visible surface, inside the margins the shadow is painted in."""
+        s = self.SHADOW
+        return self.rect().adjusted(s, s - 4, -s, -s - 4)
+
     def apply_theme(self, theme: Theme) -> None:
         self._theme = theme
         self.update()
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         t = self._theme
         p = t.palette
         s = self.SHADOW
         painter = QPainter(self)
-        panel = QRectF(self.rect()).adjusted(s, s - 4, -s, -s - 4)
+        panel = QRectF(self.panel_rect())
         paint_shadow(painter, panel, t.radius.lg, p.shadow, depth=s, strength=0.5 if t.dark else 0.24)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(QPen(QColor(p.border_strong if t.dark else p.border), 1))
@@ -242,11 +247,11 @@ class Keycaps(QWidget):
         self.updateGeometry()
         self.update()
 
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def sizeHint(self) -> QSize:
         font = meta_font(self._theme)
         return QSize(keycaps_width(self._shortcut, font) + 1, max(20, QFontMetrics(font).height() + 6))
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         painter = QPainter(self)
         paint_keycaps(
             painter, 0, self.height() / 2, self._shortcut, meta_font(self._theme), self._theme.palette, True
@@ -289,26 +294,25 @@ class RowButton(QAbstractButton):
         self._annotation = text
         self.update()
 
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def sizeHint(self) -> QSize:
         m = self._theme.metrics
         self.ensurePolished()
-        # 36 before the label and 8 after it, plus 4 so rounding never elides a label that fits.
         width = 48 + self.fontMetrics().horizontalAdvance(self.text())
         if self._shortcut:
             width += keycaps_width(self._shortcut, meta_font(self._theme)) + 12
         return QSize(width, m.row)
 
-    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - Qt override
+    def enterEvent(self, event: QEnterEvent) -> None:
         self._hover = True
         self._glow.set_on(True)
         super().enterEvent(event)
 
-    def leaveEvent(self, event: object) -> None:  # noqa: N802 - Qt override
+    def leaveEvent(self, event: QEvent) -> None:
         self._hover = False
         self._glow.set_on(False)
-        super().leaveEvent(event)  # type: ignore[arg-type]
+        super().leaveEvent(event)
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         p = self._theme.palette
         glow = self._glow.amount
         painter = QPainter(self)
@@ -391,15 +395,15 @@ class CaptionButton(QAbstractButton):
         self.setFixedSize(theme.metrics.caption_button, theme.metrics.title_bar)
         self.update()
 
-    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - Qt override
+    def enterEvent(self, event: QEnterEvent) -> None:
         self.set_hover(True)
         super().enterEvent(event)
 
-    def leaveEvent(self, event: object) -> None:  # noqa: N802 - Qt override
+    def leaveEvent(self, event: QEvent) -> None:
         self.set_hover(False)
-        super().leaveEvent(event)  # type: ignore[arg-type]
+        super().leaveEvent(event)
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         p = self._theme.palette
         glow = self._glow.amount
         painter = QPainter(self)
@@ -482,12 +486,12 @@ class SectionLabel(QWidget):
         self._theme = theme
         self.update()
 
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def sizeHint(self) -> QSize:
         font = caption_font(self._theme)
         extra = sum(w.sizeHint().width() for w in self._trailing)
         return QSize(QFontMetrics(font).horizontalAdvance(self._text) + 40 + extra, 24)
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         p = self._theme.palette
         painter = QPainter(self)
         font = caption_font(self._theme)

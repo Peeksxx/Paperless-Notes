@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from paperless_notes.core.security.limits import MAX_INLINE_CHARS
 from paperless_notes.mdio.lexer import (
     Span,
     State,
@@ -190,13 +191,25 @@ def parse_blocks(lines: list[str], top: bool = True, depth: int = 0) -> list[Blo
             continue
         paragraph = [line.lstrip()]
         i += 1
+        level = 0
         while i < n and not _starts_block(lines[i], lines[i + 1] if i + 1 < n else None):
-            if i + 1 < n and _is_setext(lines[i + 1]):
-                break
             paragraph.append(lines[i].lstrip())
+            if i + 1 < n and _is_setext(lines[i + 1]):
+                level = 1 if lines[i + 1].strip()[0] == "=" else 2
+                i += 2
+                break
             i += 1
-        blocks.append(Block("paragraph", lines=paragraph))
+        if level:
+            blocks.append(Block("heading", text="\n".join(p.rstrip() for p in paragraph), level=level))
+        else:
+            blocks.append(Block("paragraph", lines=paragraph))
     return blocks
+
+
+def _lazy(line: str) -> str:
+    """A lazy continuation line stays paragraph text: an ``===`` or ``--`` line there is not a heading
+    underline (CommonMark), so its first character is escaped."""
+    return "\\" + line.lstrip(" ") if _is_setext(line) else line
 
 
 def _is_setext(line: str) -> bool:
@@ -229,7 +242,7 @@ def _quote(lines: list[str], i: int, blocks: list[Block], depth: int) -> int:
         if m:
             inner.append(line[m.end() :])
         elif inner and not is_blank(line) and not is_blank(inner[-1]) and not _starts_block(line, None):
-            inner.append(line)
+            inner.append(_lazy(line))
         else:
             break
         i += 1
@@ -269,7 +282,7 @@ def _list(lines: list[str], i: int, blocks: list[Block], depth: int) -> int:
             if _indent_width(line) >= content_indent:
                 body.append(_dedent(line, content_indent))
             elif not _starts_block(line, None) and body and not is_blank(body[-1]):
-                body.append(line.strip())
+                body.append(_lazy(line.strip()))
             else:
                 break
             i += 1
@@ -331,8 +344,8 @@ def _hidden(text: str, spans: list[Span]) -> bytearray:
     return hidden
 
 
-def _inline_parts(text: str) -> list[tuple[str, int, _Link | None]]:
-    """(text, style bits, link) runs of one line of inline Markdown, markers removed."""
+def _inline_parts(text: str) -> list[tuple[str, int, _Link | None, int]]:
+    """(text, style bits, link, start) runs of inline Markdown, markers removed."""
     spans = inline_spans(text)
     links = _links(text, spans)
     hidden = _hidden(text, spans)
@@ -344,14 +357,14 @@ def _inline_parts(text: str) -> list[tuple[str, int, _Link | None]]:
     for start, end, style in flatten(spans, len(text)):
         for p in range(start, end):
             bits[p] = style
-    parts: list[tuple[str, int, _Link | None]] = []
+    parts: list[tuple[str, int, _Link | None, int]] = []
     images = {link.start: link for link in links if link.image}
     starts = {link.start for link in links}
     i = 0
     while i < len(text):
         image = images.get(i + 2)
         if image is not None and text[i : i + 2] == "![":
-            parts.append((text[image.start : image.end], -1, image))
+            parts.append((text[image.start : image.end], -1, image, i))
             i = image.end
             while i < len(text) and hidden[i]:
                 i += 1
@@ -365,7 +378,7 @@ def _inline_parts(text: str) -> list[tuple[str, int, _Link | None]]:
             if owner is not None and j >= owner.end:
                 break
             j += 1
-        parts.append((text[i:j], bits[i], owner))
+        parts.append((text[i:j], bits[i], owner, i))
         i = j
     return parts
 
@@ -379,9 +392,23 @@ _WRAPPERS = (
 )
 
 
-def _inline_html(text: str, policy: RenderPolicy) -> str:
+def _escaped(part: str, start: int, hard: frozenset[int]) -> str:
+    """``part`` as HTML text; a line break at a position in ``hard`` is a hard break."""
+    if "\n" not in part:
+        return html.escape(part, quote=False)
+    pieces: list[str] = []
+    position = start
+    for index, chunk in enumerate(part.split("\n")):
+        if index:
+            pieces.append("<br>\n" if position - 1 in hard else "\n")
+        pieces.append(html.escape(chunk, quote=False))
+        position += len(chunk) + 1
+    return "".join(pieces)
+
+
+def _inline_html(text: str, policy: RenderPolicy, hard: frozenset[int] = frozenset()) -> str:
     out: list[str] = []
-    for part, bits, link in _inline_parts(text):
+    for part, bits, link, start in _inline_parts(text):
         if bits == -1 and link is not None:
             src = policy.image(link.target or "", part) if link.target else None
             if src is not None:
@@ -389,7 +416,7 @@ def _inline_html(text: str, policy: RenderPolicy) -> str:
             else:
                 out.append(f'<span class="image">[Image: {html.escape(part or "no description")}]</span>')
             continue
-        piece = html.escape(part, quote=False)
+        piece = _escaped(part, start, hard)
         for style, name in _WRAPPERS:
             if bits & style:
                 piece = f"<{name}>{piece}</{name}>"
@@ -409,7 +436,7 @@ def _inline_plain(text: str) -> str:
         if current is not None and current.target and "".join(label) != current.target:
             out.append(f" ({current.target})")
 
-    for part, bits, link in _inline_parts(text):
+    for part, bits, link, _start in _inline_parts(text):
         if bits == -1:
             finish()
             current, label = None, []
@@ -424,16 +451,37 @@ def _inline_plain(text: str) -> str:
     return "".join(out)
 
 
+def _paragraph_text(lines: list[str]) -> tuple[str, frozenset[int]]:
+    """The paragraph as one text, its lines joined by line breaks with trailing break markers removed, so
+    emphasis and code can run across lines; and the positions of the breaks that are hard breaks."""
+    bodies: list[str] = []
+    hard: set[int] = set()
+    position = 0
+    for index, line in enumerate(lines):
+        body = line.rstrip(" ")
+        if body.endswith("\\"):
+            body = body[:-1]
+        bodies.append(body)
+        position += len(body)
+        if index < len(lines) - 1:
+            if line.endswith(("  ", "\\")):
+                hard.add(position)
+            position += 1
+    return "\n".join(bodies), frozenset(hard)
+
+
 def _paragraph_html(lines: list[str], policy: RenderPolicy) -> str:
+    text, hard = _paragraph_text(lines)
+    if len(text) <= MAX_INLINE_CHARS:
+        return _inline_html(text, policy, hard)
     rendered: list[str] = []
     for index, line in enumerate(lines):
-        hard = line.endswith(("  ", "\\"))
         body = line.rstrip(" ")
         if body.endswith("\\"):
             body = body[:-1]
         rendered.append(_inline_html(body, policy))
         if index < len(lines) - 1:
-            rendered.append("<br>\n" if hard else "\n")
+            rendered.append("<br>\n" if line.endswith(("  ", "\\")) else "\n")
     return "".join(rendered)
 
 
@@ -502,9 +550,13 @@ def blocks_plain(blocks: list[Block], indent: str = "", tight: bool = False) -> 
         if out and out[-1] and not (tight and block.kind == "list"):
             out.append("")
         if block.kind == "heading":
-            out.append(indent + _inline_plain(block.text))
+            out.append(indent + " ".join(_inline_plain(block.text).split("\n")))
         elif block.kind == "paragraph":
-            out += [indent + _inline_plain(line.rstrip(" \\")) for line in block.lines]
+            text, _ = _paragraph_text(block.lines)
+            if len(text) <= MAX_INLINE_CHARS:
+                out += [indent + line for line in _inline_plain(text).split("\n")]
+            else:
+                out += [indent + _inline_plain(line.rstrip(" \\")) for line in block.lines]
         elif block.kind == "text":
             out.append(indent + " ".join(block.lines))
         elif block.kind == "code":

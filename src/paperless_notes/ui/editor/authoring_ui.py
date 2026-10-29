@@ -9,7 +9,6 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, QPoint, QRect, Qt, QTimer
 from PySide6.QtGui import QFont, QInputMethodEvent, QKeyEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -24,6 +23,7 @@ from paperless_notes.mdio.edits import SlashQuery
 from paperless_notes.ui.editor.authoring import Authoring, AuthoringCommand
 from paperless_notes.ui.editor.note_editor import NoteEditor
 from paperless_notes.ui.shell.flow import FlowLayout
+from paperless_notes.ui.shell.popup import Popup, fit_list
 from paperless_notes.ui.theme.tokens import Theme
 
 INSERT_MENU = (
@@ -54,7 +54,8 @@ def build_menu(parent: QWidget, authoring: Authoring, groups: tuple[tuple[str, .
     return menu
 
 
-def _menu_button(text: str, tooltip: str, menu: QMenu) -> QToolButton:
+def menu_button(text: str, tooltip: str, menu: QMenu) -> QToolButton:
+    """A labelled button that opens ``menu`` on click, styled like the other editing buttons."""
     button = QToolButton()
     button.setText(text)
     button.setProperty("kind", "labelled")
@@ -74,17 +75,19 @@ class AuthoringBar(QWidget):
         self.setObjectName("AuthoringBar")
         self.authoring = authoring
         layout = FlowLayout(self, spacing=theme.spacing.xs)
-        self.insert_button = _menu_button(
+        self._flow = layout
+        self.insert_button = menu_button(
             "Insert",
             "Insert headings, lists, code, tables, images and links (or type / in the text)",
             build_menu(self, authoring, INSERT_MENU),
         )
-        self.format_button = _menu_button(
+        self.format_menu = build_menu(self, authoring, FORMAT_MENU)
+        self.format_button = menu_button(
             "Format",
-            "Bold, italic, strikethrough, code, links and line commands",
-            build_menu(self, authoring, FORMAT_MENU),
+            "Bold, italic, strikethrough, code, links, line commands and the note's colours",
+            self.format_menu,
         )
-        self.table_button = _menu_button(
+        self.table_button = menu_button(
             "Table",
             "Add or remove rows and columns of the table at the caret",
             build_menu(self, authoring, TABLE_MENU),
@@ -98,12 +101,13 @@ class AuthoringBar(QWidget):
         self.message.setWordWrap(True)
         self.message.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.message.setAccessibleName("Editing message")
+        self.message.hide()
         for widget in (self.insert_button, self.format_button, self.table_button, self.copy_button):
             layout.addWidget(widget)
         layout.addWidget(self.message)
         self._clear = QTimer(self)
         self._clear.setSingleShot(True)
-        self._clear.timeout.connect(lambda: self.message.setText(""))
+        self._clear.timeout.connect(lambda: self.show_message(""))
         self._connections = [
             authoring.message.connect(self.show_message),
             authoring.context_changed.connect(self.refresh),
@@ -117,8 +121,13 @@ class AuthoringBar(QWidget):
         self.insert_button.setEnabled(writable)
         self.format_button.setEnabled(True)
 
+    def add_trailing(self, widget: QWidget) -> None:
+        """Place ``widget`` after the editing buttons and before the message line."""
+        self._flow.insert_widget(self._flow.indexOf(self.message), widget)
+
     def show_message(self, text: str) -> None:
         self.message.setText(text)
+        self.message.setVisible(bool(text))
         if text:
             self._clear.start(MESSAGE_MS)
 
@@ -148,14 +157,12 @@ def slash_matches(commands: list[AuthoringCommand], query: str) -> list[Authorin
     return [*starts, *contains]
 
 
-class SlashMenu(QFrame):
+class SlashMenu(Popup):
     """Commands for the ``/query`` at the caret. The editor keeps focus; typing filters, arrows move,
     Enter applies, Escape closes, a click applies."""
 
     def __init__(self, editor: NoteEditor, authoring: Authoring) -> None:
-        super().__init__(editor)
-        self.setObjectName("Toast")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        super().__init__(editor, editor.theme)
         self.setAccessibleName("Insert command")
         self.editor = editor
         self.authoring = authoring
@@ -163,26 +170,34 @@ class SlashMenu(QFrame):
         self.list.setProperty("role", "plain")
         self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.list.setAccessibleName("Insert commands")
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list.itemClicked.connect(self._run_item)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(*self.inner_margins(editor.theme.spacing.xs, editor.theme.spacing.xs))
         layout.addWidget(self.list)
         self._commands = [c for c in authoring.commands.values() if c.slash]
         authoring.slash_keys = self.handle_key
-        self._connection = authoring.slash_changed.connect(self._on_query)
-        self.hide()
+        self._connections = [
+            authoring.slash_changed.connect(self._on_query),
+            editor.theme_changed.connect(self._on_theme),
+        ]
 
     def dispose(self) -> None:
-        QObject.disconnect(self._connection)
+        for connection in self._connections:
+            QObject.disconnect(connection)
+        self._connections.clear()
         self.authoring.slash_keys = None
-        self.hide()
+        self.close_now()
+
+    def _on_theme(self) -> None:
+        self.apply_theme(self.editor.theme)
 
     def labels(self) -> list[str]:
         return [self.list.item(i).text() for i in range(self.list.count())]
 
     def _on_query(self, query: SlashQuery | None) -> None:
         if query is None:
-            self.hide()
+            self.dismiss()
             return
         matches = slash_matches(self._commands, query.text)
         self.list.clear()
@@ -192,29 +207,18 @@ class SlashMenu(QFrame):
             item.setToolTip(command.purpose)
             self.list.addItem(item)
         if not matches:
-            self.hide()
+            self.dismiss()
             return
         self.list.setCurrentRow(0)
         self._place()
-        self.show()
-        self.raise_()
 
     def _place(self) -> None:
-        rows = min(self.list.count(), MAX_SLASH_ROWS)
-        row = max(self.list.sizeHintForRow(0), 24)
-        width = max(220, self.list.sizeHintForColumn(0) + 32)
-        height = rows * row + 12
+        fit_list(self.list, self.editor.rect(), MAX_SLASH_ROWS)
         caret = self.editor.cursorRect()
-        origin = self.editor.viewport().mapTo(self.editor, caret.bottomLeft())
-        area = self.editor.rect()
-        x = max(4, min(origin.x(), area.width() - width - 4))
-        y = origin.y() + 4
-        if y + height > area.height() - 4:
-            y = self.editor.viewport().mapTo(self.editor, caret.topLeft()).y() - height - 4
-        self.setGeometry(QRect(x, max(4, y), min(width, area.width() - 8), min(height, area.height() - 8)))
+        self.present(QRect(self.editor.viewport().mapTo(self.editor, caret.topLeft()), caret.size()))
 
     def handle_key(self, event: QKeyEvent) -> bool:
-        if not self.isVisible():
+        if not self.is_open:
             return False
         key = event.key()
         if key in (Qt.Key.Key_Up, Qt.Key.Key_Down):
@@ -244,27 +248,26 @@ class _BubbleButton(QToolButton):
         super().__init__(parent)
         self._on_escape = on_escape
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key.Key_Escape:
             self._on_escape()
             return
         super().keyPressEvent(event)
 
 
-class FormatBubble(QFrame):
-    """Bold, italic, strikethrough, code and link for a non-empty selection, placed near it inside the
-    viewport. Alt+F10 moves keyboard focus into it and Escape returns to the text. It listens to the
-    editor through its hook lists, never through an event filter, so destroying the editor is safe."""
+class FormatBubble(Popup):
+    """Bold, italic, strikethrough, code and link for a non-empty selection, placed above it (below when there
+    is no room) inside the viewport. Alt+F10 moves keyboard focus into it and Escape returns to the text. It
+    listens to the editor through its hook lists, never through an event filter, so destroying the editor is
+    safe."""
 
     def __init__(self, editor: NoteEditor, authoring: Authoring) -> None:
-        super().__init__(editor)
-        self.setObjectName("Hint")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        super().__init__(editor, editor.theme)
         self.setAccessibleName("Format selection")
         self.editor = editor
         self.authoring = authoring
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setContentsMargins(*self.inner_margins(editor.theme.spacing.xs, editor.theme.spacing.xxs))
         layout.setSpacing(2)
         self.buttons: dict[str, QToolButton] = {}
         for command_id, text in BUBBLE:
@@ -287,14 +290,17 @@ class FormatBubble(QFrame):
         self._shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
         self._connections = [
             editor.selectionChanged.connect(self.update_state),
-            editor.verticalScrollBar().valueChanged.connect(self._reposition),
-            editor.horizontalScrollBar().valueChanged.connect(self._reposition),
+            editor.verticalScrollBar().valueChanged.connect(self._follow),
+            editor.horizontalScrollBar().valueChanged.connect(self._follow),
             editor.column_changed.connect(self._on_resize),
+            editor.theme_changed.connect(self._on_theme),
         ]
         editor.key_hooks.append(self._key)
         editor.focus_out_hooks.append(self._focus_out)
         editor.input_method_hooks.append(self._input_method)
-        self.hide()
+
+    def _on_theme(self) -> None:
+        self.apply_theme(self.editor.theme)
 
     def dispose(self) -> None:
         for connection in self._connections:
@@ -307,7 +313,7 @@ class FormatBubble(QFrame):
         if self._input_method in self.editor.input_method_hooks:
             self.editor.input_method_hooks.remove(self._input_method)
         self._shortcut.setEnabled(False)
-        self.hide()
+        self.close_now()
 
     def should_show(self) -> bool:
         cursor = self.editor.textCursor()
@@ -317,20 +323,20 @@ class FormatBubble(QFrame):
     def update_state(self) -> None:
         if self.should_show():
             self._reposition()
-            self.show()
-            self.raise_()
         else:
-            self.hide()
+            self.dismiss()
 
     def _on_resize(self, _left: int, _width: int) -> None:
-        if self.isVisible():
+        self._follow()
+
+    def _follow(self, *_args: object) -> None:
+        if self.is_open:
             self._reposition()
 
     def _reposition(self) -> None:
-        if not self.editor.textCursor().hasSelection():
-            return
-        self.adjustSize()
         cursor = self.editor.textCursor()
+        if not cursor.hasSelection():
+            return
         first = self.editor.textCursor()
         first.setPosition(cursor.selectionStart())
         last = self.editor.textCursor()
@@ -338,26 +344,21 @@ class FormatBubble(QFrame):
         top = self.editor.cursorRect(first)
         bottom = self.editor.cursorRect(last)
         viewport = self.editor.viewport()
-        width, height = self.width(), self.height()
-        above = viewport.mapTo(self.editor, QPoint(top.left(), top.top() - height - 6))
-        below = viewport.mapTo(self.editor, QPoint(top.left(), bottom.bottom() + 6))
-        bounds = viewport.geometry()
-        point = above if above.y() >= bounds.top() else below
-        x = max(bounds.left() + 4, min(point.x(), bounds.right() - width - 4))
-        y = max(bounds.top() + 4, min(point.y(), bounds.bottom() - height - 4))
-        self.move(x, y)
+        corner = viewport.mapTo(self.editor, top.topLeft())
+        anchor = QRect(corner, QPoint(corner.x() + top.width(), corner.y() + bottom.bottom() - top.top()))
+        self.present(anchor, gap=6, above=True, bounds=viewport.geometry())
 
     def focus_first(self) -> None:
-        if self.isVisible():
+        if self.is_open:
             self.buttons["bold"].setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     def return_to_text(self) -> None:
-        self.hide()
+        self.dismiss()
         self.editor.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _key(self, event: QKeyEvent) -> bool:
-        if event.key() == Qt.Key.Key_Escape and self.isVisible():
-            self.hide()
+        if event.key() == Qt.Key.Key_Escape and self.is_open:
+            self.dismiss()
             return True
         return False
 
@@ -367,4 +368,4 @@ class FormatBubble(QFrame):
     def _input_method(self, event: QInputMethodEvent) -> None:
         self._composing = bool(event.preeditString())
         if self._composing:
-            self.hide()
+            self.dismiss()

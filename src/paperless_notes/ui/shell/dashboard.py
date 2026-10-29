@@ -10,7 +10,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QEnterEvent, QFont, QFontMetrics, QPainter, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -84,15 +84,15 @@ class _Hoverable(QAbstractButton):
         self._theme = theme
         self.update()
 
-    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - Qt override
+    def enterEvent(self, event: QEnterEvent) -> None:
         self._hover = True
         self._glow.set_on(True)
         super().enterEvent(event)
 
-    def leaveEvent(self, event: object) -> None:  # noqa: N802 - Qt override
+    def leaveEvent(self, event: QEvent) -> None:
         self._hover = False
         self._glow.set_on(False)
-        super().leaveEvent(event)  # type: ignore[arg-type]
+        super().leaveEvent(event)
 
     def _focus_ring(self, painter: QPainter, rect: QRectF, radius: float) -> None:
         if self.hasFocus() and self.window().testAttribute(Qt.WidgetAttribute.WA_KeyboardFocusChange):
@@ -118,7 +118,7 @@ class NoteTile(_Hoverable):
         self.when = text
         self.update()
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         t = self._theme
         p = t.palette
         painter = QPainter(self)
@@ -188,7 +188,7 @@ class ChangeRow(_Hoverable):
         self.setFixedHeight(34)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         t = self._theme
         p = t.palette
         painter = QPainter(self)
@@ -249,7 +249,7 @@ class _DayLabel(QWidget):
         self._theme = theme
         self.update()
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         p = self._theme.palette
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -309,7 +309,7 @@ class ChangeRail(QWidget):
                 widget.apply_theme(theme)
         self.update()
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         if not self.rows:
             return
         painter = QPainter(self)
@@ -329,14 +329,14 @@ class TagChip(_Hoverable):
         self.setAccessibleName(f"Notes tagged #{display}, {count}")
         self.setToolTip(f"{count:,} note{'s' if count != 1 else ''} tagged #{display}")
 
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def sizeHint(self) -> QSize:
         meta = QFontMetrics(meta_font(self._theme))
         return QSize(
             self.fontMetrics().horizontalAdvance(self.text()) + meta.horizontalAdvance(str(self.count)) + 28,
             28,
         )
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         t = self._theme
         p = t.palette
         painter = QPainter(self)
@@ -387,7 +387,7 @@ class TipLine(QWidget):
             ": for a line."
         )
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         t = self._theme
         p = t.palette
         painter = QPainter(self)
@@ -621,7 +621,7 @@ class Dashboard(QScrollArea):
         return [tile.path for tile in self.tiles]
 
     @staticmethod
-    def _clear(host: QVBoxLayout | FlowLayout, rows: list) -> None:  # type: ignore[type-arg]
+    def _clear[W: QWidget](host: QVBoxLayout | FlowLayout, rows: list[W]) -> None:
         for widget in rows:
             host.removeWidget(widget)
             widget.deleteLater()
@@ -672,7 +672,7 @@ class Dashboard(QScrollArea):
         self.tiles_host.updateGeometry()
         self.tags_host.updateGeometry()
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         narrow = self.viewport().width() < self.NARROW
         direction = QBoxLayout.Direction.TopToBottom if narrow else QBoxLayout.Direction.LeftToRight

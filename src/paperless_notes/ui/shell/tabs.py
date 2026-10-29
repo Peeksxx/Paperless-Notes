@@ -1,7 +1,8 @@
 """The tab strip: painted tabs that merge into the page, a state dot for unsaved or troubled notes, a graphite
 marker on the active tab, close buttons on the active and hovered tabs, pins, reorder, an overflow list and
 a context menu that shows shortcuts. Unpinned tabs share one width, like a browser: it shrinks as tabs are
-added and grows as they close, between MIN_TAB and MAX_TAB, and a new tab grows in.
+added and grows as they close, between MIN_TAB and MAX_TAB, and a new tab grows in. A tab dragged up or
+down out of the strip leaves it, to be dropped on another tab group; the context menu moves it too.
 
 Tab text keeps the state mark (a bullet for unsaved, ! for a problem, ? for missing) for tooltips and screen
 readers; the painted tab shows the mark as a coloured dot instead."""
@@ -10,10 +11,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QByteArray, QEvent, QMimeData, QPoint, QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
+    QDrag,
     QIcon,
     QKeySequence,
     QMouseEvent,
@@ -27,6 +29,7 @@ from PySide6.QtWidgets import QMenu, QStyle, QStyleOptionTab, QTabBar, QToolButt
 from paperless_notes.ui.shell.motion import Tween
 from paperless_notes.ui.shell.widgets import ATTENTION, BUSY, paint_dot
 from paperless_notes.ui.theme.icons import draw_glyph, glyph_icon
+from paperless_notes.ui.theme.style import option_fields
 from paperless_notes.ui.theme.tokens import Theme
 
 MARKS = {" \N{BULLET}": BUSY, " !": ATTENTION, " ?": ATTENTION}
@@ -34,6 +37,9 @@ CLOSE_ROOM = 24
 MAX_TAB = 248
 MIN_TAB = 56
 PINNED_MIN = 72
+TAB_MIME = "application/x-paperless-notes-tab"
+DRAG_OUT = 24
+NEW_GROUP = -1
 
 
 def split_mark(text: str) -> tuple[str, str]:
@@ -44,6 +50,21 @@ def split_mark(text: str) -> tuple[str, str]:
     return text, ""
 
 
+def tab_mime(key: str, index: int) -> QMimeData:
+    """What a dragged tab carries: the key of the group it left and its index there."""
+    mime = QMimeData()
+    mime.setData(TAB_MIME, QByteArray(f"{key}:{index}".encode("ascii")))
+    return mime
+
+
+def read_tab_mime(mime: QMimeData) -> tuple[str, int] | None:
+    """The group key and tab index a dragged tab carries; None for anything else."""
+    if not mime.hasFormat(TAB_MIME):
+        return None
+    key, _, index = bytes(mime.data(TAB_MIME).data()).decode("ascii", "replace").partition(":")
+    return (key, int(index)) if key and index.isdigit() else None
+
+
 class TabStrip(QTabBar):
     close_requested = Signal(int)
     pin_toggled = Signal(int)
@@ -51,6 +72,7 @@ class TabStrip(QTabBar):
     reopen_requested = Signal()
     copy_path_requested = Signal(int)
     history_requested = Signal(int)
+    move_requested = Signal(int, int)
 
     def __init__(self, theme: Theme, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -61,8 +83,6 @@ class TabStrip(QTabBar):
         self.setDocumentMode(True)
         self.setExpanding(False)
         self.setUsesScrollButtons(True)
-        # paint_tab elides the name to its own layout; Qt's elision assumes its icon spacing and cut pinned
-        # names short ("Sourd..." in a tab that fits "Sourdough").
         self.setElideMode(Qt.TextElideMode.ElideNone)
         self.setDrawBase(False)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
@@ -83,6 +103,9 @@ class TabStrip(QTabBar):
         self._marker = Tween(self, 1.0, lambda _value: self.update())
         self._marker_from: QWidget | None = None
         self._current_button: QWidget | None = None
+        self._pressed = -1
+        self.drag_key = ""
+        self.move_targets: Callable[[], list[tuple[str, int]]] = list
         self.currentChanged.connect(self._current_moved)
         self.apply_theme(theme)
 
@@ -133,8 +156,6 @@ class TabStrip(QTabBar):
 
     def _pinned_width(self, index: int) -> int:
         name, _tone = split_mark(self.tabText(index))
-        # The painted body is inset 2 px each side; inside it: 12 margin, 16 glyph, 8 gap, the name,
-        # 12 margin, and 2 px so rounding never elides a name that fits.
         width = 2 + 12 + 16 + 8 + self.fontMetrics().horizontalAdvance(name) + 12 + 2 + 2
         return max(PINNED_MIN, min(MAX_TAB, width))
 
@@ -152,7 +173,6 @@ class TabStrip(QTabBar):
         self._relayout()
 
     def _relayout(self) -> None:
-        # Setting the icon size again marks Qt's tab layout dirty, so it asks for the tab sizes again.
         self.setIconSize(self.iconSize())
 
     def _decorate(self, index: int) -> None:
@@ -196,7 +216,7 @@ class TabStrip(QTabBar):
             a.left() + (b.left() - a.left()) * t, a.top(), a.width() + (b.width() - a.width()) * t, 2
         )
 
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, event: QPaintEvent) -> None:
         super().paintEvent(event)
         marker = self.sliding_marker()
         if marker is not None:
@@ -223,7 +243,7 @@ class TabStrip(QTabBar):
                 show = not self.is_pinned(index) and index in (current, self._hover)
                 button.setVisible(show)
 
-    def tabSizeHint(self, index: int) -> QSize:  # noqa: N802 - Qt override
+    def tabSizeHint(self, index: int) -> QSize:
         height = self._theme.metrics.tab_bar + 4
         if self.is_pinned(index):
             return QSize(self._pinned_width(index), height)
@@ -233,7 +253,7 @@ class TabStrip(QTabBar):
             width = self._to_width * float(self._progress.value)
         return QSize(max(0, round(width)), height)
 
-    def minimumTabSizeHint(self, index: int) -> QSize:  # noqa: N802 - Qt override
+    def minimumTabSizeHint(self, index: int) -> QSize:
         """The same as the size hint: Qt never squeezes some tabs more than others."""
         return self.tabSizeHint(index)
 
@@ -247,12 +267,13 @@ class TabStrip(QTabBar):
         """Called by the application style for every tab, including one being dragged."""
         t = self._theme
         p = t.palette
-        rect = QRectF(option.rect)  # type: ignore[attr-defined]
-        state = option.state  # type: ignore[attr-defined]
+        fields = option_fields(option)
+        rect = QRectF(fields.rect)
+        state = fields.state
         selected = bool(state & QStyle.StateFlag.State_Selected) and not self.property("home")
         hovered = bool(state & QStyle.StateFlag.State_MouseOver)
-        pinned = not option.icon.isNull()  # type: ignore[attr-defined]
-        name, tone = split_mark(option.text)  # type: ignore[attr-defined]
+        pinned = not fields.icon.isNull()
+        name, tone = split_mark(fields.text)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         body = rect.adjusted(2, 4, -2, 0)
@@ -276,7 +297,7 @@ class TabStrip(QTabBar):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(p.hover))
             painter.drawRoundedRect(body.adjusted(0, 2, 0, -4), t.radius.md, t.radius.md)
-        next_selected = option.selectedPosition == QStyleOptionTab.SelectedPosition.NextIsSelected  # type: ignore[attr-defined]
+        next_selected = fields.selectedPosition == QStyleOptionTab.SelectedPosition.NextIsSelected
         if not selected and not hovered and not (next_selected and not self.property("home")):
             x = rect.right() - 0.5
             centre = body.center().y() - 1
@@ -312,7 +333,7 @@ class TabStrip(QTabBar):
             )
         painter.restore()
 
-    def tabInserted(self, index: int) -> None:  # noqa: N802 - Qt override
+    def tabInserted(self, index: int) -> None:
         super().tabInserted(index)
         close = QToolButton(self)
         close.setObjectName("TabClose")
@@ -326,18 +347,51 @@ class TabStrip(QTabBar):
         self._decorate(index)
         self._resize_tabs(close)
 
-    def tabRemoved(self, index: int) -> None:  # noqa: N802 - Qt override
+    def tabRemoved(self, index: int) -> None:
         super().tabRemoved(index)
         self._hover = -1
         self._sync_close_buttons()
         self._resize_tabs(None)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        self._pressed = -1
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pressed = self.tabAt(event.position().toPoint())
+        super().mousePressEvent(event)
+
+    def leaves_strip(self, pos: QPoint) -> bool:
+        """Whether a tab dragged to ``pos`` has gone far enough up or down to leave the strip."""
+        return pos.y() < -DRAG_OUT or pos.y() > self.height() + DRAG_OUT
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        pos = event.position().toPoint()
+        held = bool(event.buttons() & Qt.MouseButton.LeftButton)
+        if held and self.drag_key and 0 <= self._pressed < self.count() and self.leaves_strip(pos):
+            self._drag_out(self._pressed, event)
+            return
         super().mouseMoveEvent(event)
-        hover = self.tabAt(event.position().toPoint())
+        hover = self.tabAt(pos)
         if hover != self._hover:
             self._hover = hover
             self._sync_close_buttons()
+
+    def _drag_out(self, index: int, event: QMouseEvent) -> None:
+        """Let the strip finish its own move, then carry the tab out as a drag another group can take."""
+        self._pressed = -1
+        release = QMouseEvent(
+            QEvent.Type.MouseButtonRelease,
+            event.position(),
+            event.globalPosition(),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            event.modifiers(),
+        )
+        super().mouseReleaseEvent(release)
+        index = self.currentIndex() if 0 <= self.currentIndex() < self.count() else index
+        drag = QDrag(self)
+        drag.setMimeData(tab_mime(self.drag_key, index))
+        drag.setPixmap(self.grab(self.tabRect(index)))
+        drag.exec(Qt.DropAction.MoveAction)
 
     def event(self, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Leave and self._hover != -1:
@@ -345,7 +399,7 @@ class TabStrip(QTabBar):
             self._sync_close_buttons()
         return super().event(event)
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.MiddleButton:
             index = self.tabAt(event.position().toPoint())
             if index >= 0:
@@ -358,6 +412,9 @@ class TabStrip(QTabBar):
             if self.tabButton(index, QTabBar.ButtonPosition.RightSide) is button:
                 self.close_requested.emit(index)
                 return
+
+    def _mover(self, index: int, target: int) -> Callable[[], None]:
+        return lambda: self.move_requested.emit(index, target)
 
     def menu_for(self, index: int) -> QMenu:
         menu = QMenu(self)
@@ -373,6 +430,11 @@ class TabStrip(QTabBar):
         add("Unpin tab" if pinned else "Pin tab", lambda: self.pin_toggled.emit(index))
         add("Version history", lambda: self.history_requested.emit(index), "Ctrl+Shift+H")
         add("Copy path", lambda: self.copy_path_requested.emit(index), "Ctrl+Shift+C")
+        targets = self.move_targets()
+        if targets:
+            menu.addSeparator()
+            for label, target in targets:
+                add(label, self._mover(index, target))
         menu.addSeparator()
         add("Close tab", lambda: self.close_requested.emit(index), "Ctrl+W")
         add("Close other tabs", lambda: self.close_others_requested.emit(index))

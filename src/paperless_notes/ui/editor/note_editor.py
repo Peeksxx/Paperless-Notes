@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from typing import Any
 
-from PySide6.QtCore import QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QContextMenuEvent,
@@ -31,7 +32,7 @@ from PySide6.QtGui import (
     QTextDocument,
     QWheelEvent,
 )
-from PySide6.QtWidgets import QMenu, QPlainTextEdit, QToolTip, QWidget
+from PySide6.QtWidgets import QMenu, QPlainTextDocumentLayout, QPlainTextEdit, QToolTip, QWidget
 
 from paperless_notes.core.security.links import open_link
 from paperless_notes.mdio.highlighter import BlockDecor, HighlightTheme, MarkdownHighlighter, lexer_state
@@ -39,6 +40,7 @@ from paperless_notes.mdio.links import link_at
 from paperless_notes.ui.theme.tokens import NOTE_FONTS, Theme
 
 ZOOM_STEPS = (70, 80, 90, 100, 110, 125, 150, 175, 200)
+HINT_OPACITY = 0.6
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +62,10 @@ class _Gutter(QWidget):
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, event: QPaintEvent) -> None:
         self._editor.paint_gutter(self, event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         mark = self._editor.mark_at(event.position().y())
         if mark is None:
             QToolTip.hideText()
@@ -71,7 +73,9 @@ class _Gutter(QWidget):
         QToolTip.showText(event.globalPosition().toPoint(), self._editor.mark_tooltip(mark), self)
 
 
-def highlight_theme(theme: Theme, note_font: str, point_size: float) -> HighlightTheme:
+def highlight_theme(
+    theme: Theme, note_font: str, point_size: float, families: tuple[str, ...] | None = None
+) -> HighlightTheme:
     p = theme.palette
     return HighlightTheme(
         text=p.text,
@@ -83,7 +87,7 @@ def highlight_theme(theme: Theme, note_font: str, point_size: float) -> Highligh
         quote=p.quote,
         html=p.text_muted,
         base_point_size=point_size,
-        body_families=NOTE_FONTS.get(note_font, NOTE_FONTS["sans"]),
+        body_families=families or NOTE_FONTS.get(note_font, NOTE_FONTS["sans"]),
         mono_family=theme.typography.mono_families[0],
         spelling=p.state_attention,
     )
@@ -94,6 +98,7 @@ class NoteEditor(QPlainTextEdit):
     theme_changed = Signal()
     marks_changed = Signal(int)
     column_changed = Signal(int, int)
+    width_changed = Signal()
     focused = Signal()
 
     def __init__(
@@ -110,12 +115,16 @@ class NoteEditor(QPlainTextEdit):
         self.setDocument(document)
         self.setFrameShape(QPlainTextEdit.Shape.NoFrame)
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setAccessibleName("Note text")
         self._highlighter = highlighter
         self._opener = opener
         self._theme = theme
         self._note_font = note_font
+        self._families: tuple[str, ...] | None = None
         self._readable = readable_width if readable_width is not None else theme.metrics.readable_width
+        self._width_cap: int | None = None
+        self.natural_width = 0
         self._zoom = 100
         self._marks: list[ChangeMark] = []
         self.drives_reveal = True
@@ -125,8 +134,10 @@ class NoteEditor(QPlainTextEdit):
         self.input_method_hooks: list[Callable[[QInputMethodEvent], None]] = []
         self.paint_hooks: list[Callable[[QPainter], None]] = []
         self.context_menu_hooks: list[Callable[[QMenu, QPoint], None]] = []
+        self.hover_hooks: list[Callable[[QPointF], None]] = []
         self._gutter = _Gutter(self)
         self.cursorPositionChanged.connect(self._on_cursor_moved)
+        self.verticalScrollBar().rangeChanged.connect(self._on_scroll_range)
         self.apply_theme(theme)
         self._on_cursor_moved()
 
@@ -138,12 +149,12 @@ class NoteEditor(QPlainTextEdit):
         """Paste and drop go through ``handler`` first (smart paste, images); False falls back to Qt."""
         self._paste_handler = handler
 
-    def canInsertFromMimeData(self, source: QMimeData) -> bool:  # noqa: N802 - Qt override
+    def canInsertFromMimeData(self, source: QMimeData) -> bool:
         if self._paste_handler is not None and (source.hasUrls() or source.hasImage()):
             return True
         return super().canInsertFromMimeData(source)
 
-    def insertFromMimeData(self, source: QMimeData) -> None:  # noqa: N802 - Qt override
+    def insertFromMimeData(self, source: QMimeData) -> None:
         if self._paste_handler is not None and self._paste_handler(source, False):
             return
         super().insertFromMimeData(source)
@@ -160,14 +171,16 @@ class NoteEditor(QPlainTextEdit):
         PySide hands a document to C++ ownership when a view adopts it, yet Qt only deletes documents a
         view created itself, so an adopted document would never be freed. Detaching the highlighter and
         taking ownership back lets the document go with its adapter (measured by tools/ui_memcheck.py).
-        When another view still shows the document (split view), ``detach_highlighter`` is False: the
+        When another view still shows the document (another tab group), ``detach_highlighter`` is False: the
         shared highlighter stays with the document and only this view lets go of it.
         """
         document = self.document()
         if self._highlighter is not None and detach_highlighter:
             self._highlighter.setDocument(None)
         self._highlighter = None
-        self.setDocument(QTextDocument(self))
+        blank = QTextDocument(self)
+        blank.setDocumentLayout(QPlainTextDocumentLayout(blank))
+        self.setDocument(blank)
         document.setParent(None)
 
     @property
@@ -198,7 +211,9 @@ class NoteEditor(QPlainTextEdit):
         palette.setColor(QPalette.ColorRole.Text, QColor(p.text))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(p.selection))
         palette.setColor(QPalette.ColorRole.HighlightedText, QColor(p.selection_text))
-        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(p.text_muted))
+        hint = QColor(p.text_muted)
+        hint.setAlphaF(HINT_OPACITY)
+        palette.setColor(QPalette.ColorRole.PlaceholderText, hint)
         self.setAutoFillBackground(True)
         self.setPalette(palette)
         self.viewport().setPalette(palette)
@@ -209,18 +224,34 @@ class NoteEditor(QPlainTextEdit):
         self._note_font = note_font
         self._apply_font()
 
+    @property
+    def font_families(self) -> tuple[str, ...]:
+        """The faces the note is drawn in: the note font's, unless ``set_font_families`` chose others."""
+        return self._families or NOTE_FONTS.get(self._note_font, NOTE_FONTS["sans"])
+
+    def set_font_families(self, families: tuple[str, ...] | None) -> None:
+        """Draw the note in ``families`` instead of the note font's faces (export picks static faces)."""
+        self._families = families
+        self._apply_font()
+
+    @property
+    def readable_width(self) -> int:
+        return self._readable
+
     def set_readable_width(self, width: int) -> None:
         self._readable = width
         self._update_margins()
 
     def _apply_font(self) -> None:
         font = QFont()
-        font.setFamilies(list(NOTE_FONTS.get(self._note_font, NOTE_FONTS["sans"])))
+        font.setFamilies(list(self.font_families))
         font.setPointSizeF(self.point_size)
         self.document().setDefaultFont(font)
         self.setFont(font)
         if self._highlighter is not None:
-            self._highlighter.set_theme(highlight_theme(self._theme, self._note_font, self.point_size))
+            self._highlighter.set_theme(
+                highlight_theme(self._theme, self._note_font, self.point_size, self.font_families)
+            )
         self._update_margins()
 
     def set_zoom(self, percent: int) -> None:
@@ -236,20 +267,48 @@ class NoteEditor(QPlainTextEdit):
     def zoom_out(self) -> None:
         self.set_zoom(next((z for z in reversed(ZOOM_STEPS) if z < self._zoom), ZOOM_STEPS[0]))
 
+    def set_width_cap(self, cap: int | None) -> None:
+        """The widest the text may run. Views of one note in tab groups share one text layout, so they all
+        take the narrowest view's width; otherwise the narrow view would not wrap its lines."""
+        if cap != self._width_cap:
+            self._width_cap = cap
+            self._update_margins()
+
     def _update_margins(self) -> None:
         gutter = self._theme.metrics.gutter
         available = self.width() - self.verticalScrollBar().sizeHint().width()
         column = int(self._readable * self._zoom / 100) if self._readable > 0 else available
         side = max(gutter, (available - column) // 2)
         right = max(0, side - gutter // 2)
+        bar = self.verticalScrollBar()
+        natural = max(0, self.width() - side - right - (bar.width() if bar.isVisible() else 0))
+        if natural != self.natural_width:
+            self.natural_width = natural
+            self.width_changed.emit()
+        cap = self._width_cap
+        if cap is not None and 0 < cap < natural:
+            extra = natural - cap
+            side += extra // 2
+            right += extra - extra // 2
         self.setViewportMargins(side, 0, right, 0)
         cr = self.contentsRect()
         self._gutter.setGeometry(QRect(cr.left() + side - gutter, cr.top(), gutter, cr.height()))
         self.column_changed.emit(side, max(0, self.width() - side - right))
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._update_margins()
+
+    def _on_scroll_range(self, _low: int, _high: int) -> None:
+        """The scroll bar appearing or going narrows or widens the text without resizing the editor."""
+        if self._width_cap is not None:
+            QTimer.singleShot(0, self, self._update_margins)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if not event.buttons():
+            for hook in list(self.hover_hooks):
+                hook(event.position())
+        super().mouseMoveEvent(event)
 
     def _on_cursor_moved(self) -> None:
         if self._highlighter is not None and self.drives_reveal:
@@ -258,23 +317,30 @@ class NoteEditor(QPlainTextEdit):
             self._highlighter.set_active_block(cursor.blockNumber())
         self.viewport().update()
 
-    def focusInEvent(self, event: QFocusEvent) -> None:  # noqa: N802 - Qt override
+    def focusInEvent(self, event: QFocusEvent) -> None:
         super().focusInEvent(event)
         self.focused.emit()
 
     def decor(self, block: QTextBlock) -> BlockDecor | None:
         return self._highlighter.decor_for(block) if self._highlighter is not None else None
 
-    def visible_blocks(self) -> Iterator[tuple[QTextBlock, QRectF]]:
+    def visible_blocks(self, clip: QRectF | None = None) -> Iterator[tuple[QTextBlock, QRectF]]:
+        """The shown blocks with their viewport geometry, top to bottom, limited to ``clip`` when given.
+        Each block's place follows from the one before it, so the walk stays linear in long notes."""
         block = self.firstVisibleBlock()
-        offset = self.contentOffset()
-        height = self.viewport().height()
-        while block.isValid():
-            geometry = self.blockBoundingGeometry(block).translated(offset)
-            if geometry.top() > height:
-                break
-            if block.isVisible():
+        if not block.isValid():
+            return
+        first = self.blockBoundingGeometry(block).translated(self.contentOffset())
+        top = first.top()
+        bottom = float(self.viewport().height())
+        if clip is not None:
+            bottom = min(bottom, clip.bottom())
+        while block.isValid() and top <= bottom:
+            height = self.blockBoundingRect(block).height()
+            geometry = QRectF(first.left(), top, first.width(), height)
+            if block.isVisible() and (clip is None or geometry.bottom() >= clip.top()):
                 yield block, geometry
+            top += height
             block = block.next()
 
     def char_box(self, block: QTextBlock, offset: int, length: int) -> QRectF:
@@ -295,11 +361,12 @@ class NoteEditor(QPlainTextEdit):
                     found.append((self.char_box(block, offset, 3), block, offset, checked))
         return found
 
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, event: QPaintEvent) -> None:
         p = self._theme.palette
+        clip = QRectF(event.rect())
         painter = QPainter(self.viewport())
         width = self.viewport().width()
-        for block, geometry in self.visible_blocks():
+        for block, geometry in self.visible_blocks(clip):
             decor = self.decor(block)
             if decor is not None and decor.code:
                 painter.fillRect(
@@ -309,7 +376,7 @@ class NoteEditor(QPlainTextEdit):
         super().paintEvent(event)
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        for block, geometry in self.visible_blocks():
+        for block, geometry in self.visible_blocks(clip):
             decor = self.decor(block)
             if decor is not None:
                 self._paint_decor(painter, block, geometry, decor, width)
@@ -363,7 +430,7 @@ class NoteEditor(QPlainTextEdit):
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(square, radius, radius)
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
             modifiers = event.modifiers()
             if modifiers == Qt.KeyboardModifier.NoModifier and self._toggle_task_at(event.position()):
@@ -406,7 +473,7 @@ class NoteEditor(QPlainTextEdit):
             return False
         return open_link(url, self._opener)
 
-    def wheelEvent(self, event: QWheelEvent) -> None:  # noqa: N802 - Qt override
+    def wheelEvent(self, event: QWheelEvent) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             if event.angleDelta().y() > 0:
                 self.zoom_in()
@@ -416,7 +483,7 @@ class NoteEditor(QPlainTextEdit):
             return
         super().wheelEvent(event)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         for hook in list(self.key_hooks):
             if hook(event):
                 event.accept()
@@ -433,7 +500,7 @@ class NoteEditor(QPlainTextEdit):
                 return
         super().keyPressEvent(event)
 
-    def contextMenuEvent(self, event: QContextMenuEvent) -> None:  # noqa: N802 - Qt override
+    def contextMenuEvent(self, event: QContextMenuEvent) -> None:
         menu = self.createStandardContextMenu(event.pos())
         for hook in list(self.context_menu_hooks):
             hook(menu, event.pos())
@@ -446,19 +513,20 @@ class NoteEditor(QPlainTextEdit):
         layout = block.layout()
         if layout is not None:
             for piece in layout.formats():
-                start: int = piece.start  # type: ignore[attr-defined]
-                length: int = piece.length  # type: ignore[attr-defined]
+                fields: Any = piece
+                start: int = fields.start
+                length: int = fields.length
                 if start <= offset < start + length:
-                    styled: QTextCharFormat = piece.format  # type: ignore[attr-defined]
+                    styled: QTextCharFormat = fields.format
                     return styled.font().resolve(base)
         return base
 
-    def focusOutEvent(self, event: QFocusEvent) -> None:  # noqa: N802 - Qt override
+    def focusOutEvent(self, event: QFocusEvent) -> None:
         super().focusOutEvent(event)
         for hook in list(self.focus_out_hooks):
             hook()
 
-    def inputMethodEvent(self, event: QInputMethodEvent) -> None:  # noqa: N802 - Qt override
+    def inputMethodEvent(self, event: QInputMethodEvent) -> None:
         for hook in list(self.input_method_hooks):
             hook(event)
         super().inputMethodEvent(event)
@@ -516,5 +584,5 @@ class NoteEditor(QPlainTextEdit):
                 painter.fillRect(QRectF(x, geometry.top() + 2, 3, max(2.0, geometry.height() - 4)), color)
         painter.end()
 
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def sizeHint(self) -> QSize:
         return QSize(self._readable + 2 * self._theme.metrics.gutter, 400)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QObject, QTimer
 from PySide6.QtWidgets import QGraphicsOpacityEffect, QHBoxLayout, QLabel, QToolButton, QWidget
 
-from paperless_notes.ui.shell.motion import EASE_IN, EASE_OUT, Tween
+from paperless_notes.ui.shell.motion import EASE_IN, EASE_OUT, Tween, clear_effect
 from paperless_notes.ui.shell.widgets import FloatingPanel
 from paperless_notes.ui.theme.icons import glyph_icon
 from paperless_notes.ui.theme.tokens import Theme
@@ -82,7 +82,7 @@ class Toast(FloatingPanel):
             effect.setOpacity(float(value))
 
     def _settled(self) -> None:
-        self.setGraphicsEffect(None)  # type: ignore[arg-type]
+        clear_effect(self)
         if self._shown.value == 0.0:
             self.hide()
 
@@ -95,7 +95,7 @@ class Toast(FloatingPanel):
         self._rest = max(0, self._host.height() - self.height() - s.xl - self._theme.metrics.status_bar)
         self.move(max(0, x), self._rest + round((1.0 - float(self._shown.value)) * RISE))
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self._host and event.type() == QEvent.Type.Resize and self.isVisible():
             self._place()
         return False

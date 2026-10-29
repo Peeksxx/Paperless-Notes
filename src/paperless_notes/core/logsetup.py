@@ -97,7 +97,7 @@ class PrivacyFormatter(logging.Formatter):
         self._rules = rules
         self._user = user
 
-    def formatException(self, ei: Any) -> str:  # noqa: N802 - logging API
+    def formatException(self, ei: Any) -> str:
         text = super().formatException(ei)
         exc: BaseException | None = ei[1] if isinstance(ei, tuple) else None
         seen: set[int] = set()

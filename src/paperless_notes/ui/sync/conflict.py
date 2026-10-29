@@ -12,7 +12,6 @@ from typing import Any
 from PySide6.QtCore import QMetaObject, QObject
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
-    QDialog,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -26,6 +25,7 @@ from PySide6.QtWidgets import (
 from paperless_notes.core.diffing import Op, diff_lines
 from paperless_notes.core.merge import merge3
 from paperless_notes.core.session import ConflictInfo, NoteSession, ReloadInfo, Resolution, SessionState
+from paperless_notes.ui.shell.dialogs import FadeInDialog
 from paperless_notes.ui.theme.tokens import Theme
 
 UNAVAILABLE = "The other version cannot be read as text, so it is not shown."
@@ -50,7 +50,7 @@ def starting_result(info: ConflictInfo) -> str:
     return merged.text if merged.text is not None else info.ours
 
 
-class ConflictResolver(QDialog):
+class ConflictResolver(FadeInDialog):
     def __init__(
         self, session: NoteSession, info: ConflictInfo, theme: Theme, parent: QWidget | None = None
     ) -> None:

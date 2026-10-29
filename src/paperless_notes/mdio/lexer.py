@@ -8,6 +8,8 @@ styling only, and bracket and emphasis stacks have fixed depth limits.
 from __future__ import annotations
 
 import re
+from bisect import bisect_right
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import IntFlag
 
@@ -68,9 +70,24 @@ class Span:
 
 @dataclass(frozen=True, slots=True)
 class LineResult:
+    """``inline_from`` is where the line's paragraph text starts (after quote and list markers), or -1 when
+    the line holds no paragraph text; the first ``block_spans`` spans belong to the block, not the text."""
+
     spans: list[Span]
     state: int
     heading: int = 0
+    inline_from: int = -1
+    block_spans: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ParagraphRole:
+    """How a line of paragraph text joins the paragraph above it: a list item always starts a new one, a
+    quoted line continues only quoted text, and a plain line continues any paragraph (lazily, inside a list
+    item or quote)."""
+
+    item: bool
+    quoted: bool
 
 
 _ATX = re.compile(r" {0,3}(#{1,6})(?=[ \t]|$)")
@@ -80,6 +97,7 @@ _RULE = re.compile(r" {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
 _SETEXT = re.compile(r" {0,3}(=+|-+)[ \t]*$")
 _YAML_KEY = re.compile(r"[A-Za-z0-9_][\w .-]*:(\s|$)")
 _LIST = re.compile(r"( *)([-+*]|\d{1,9}[.)])([ \t]+|$)")
+_QUOTE_START = re.compile(r" {0,3}>")
 _TASK = re.compile(r"\[([ xX])\](?=[ \t]|$)")
 _TABLE_DELIM = re.compile(r" {0,3}\|?[ \t]*:?-+:?[ \t]*(\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$")
 _REF_DEF = re.compile(r" {0,3}\[(\^?)[^\]]{1,999}\]:")
@@ -95,7 +113,11 @@ _PUNCT = frozenset("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~")
 
 
 _SPECIAL = re.compile(r"[#*_~`\[\]<>|\\!+=:-]|^[ \t\d]|www\.")
-_PLAIN = LineResult([], State.NORMAL)
+_ACROSS = re.compile(r"[*_~`\[\]<>]")
+_QUOTE_BIT = int(Style.QUOTE)
+_LIST_MARKER_BITS = int(Style.LIST | Style.MARKER)
+_PLAIN = LineResult([], State.NORMAL, inline_from=0)
+MAX_PARAGRAPH_LINES = 40
 
 
 def _is_plain(line: str, next_line: str | None) -> bool:
@@ -113,6 +135,12 @@ def is_blank(line: str) -> bool:
 
 def is_setext_underline(line: str) -> bool:
     return _SETEXT.fullmatch(line) is not None
+
+
+def can_be_setext_text(line: str) -> bool:
+    """Only paragraph text turns into a setext heading. A list item or a quote line followed by ``-`` or
+    ``---`` keeps its meaning, as in CommonMark: the dash line is a new list item or a rule."""
+    return not is_blank(line) and _LIST.match(line) is None and _QUOTE_START.match(line) is None
 
 
 def is_table_delimiter(line: str) -> bool:
@@ -149,10 +177,10 @@ def lex_line(
     m = _ATX.match(line)
     if m:
         return _heading(line, m)
-    if next_line is not None and not is_blank(line) and _SETEXT.fullmatch(next_line):
+    if next_line is not None and _SETEXT.fullmatch(next_line) and can_be_setext_text(line):
         level = 1 if next_line.strip()[0] == "=" else 2
         spans = [Span(0, len(line), Style.HEADING), *_inline(line, 0)]
-        return LineResult(spans, State.NORMAL, heading=level)
+        return LineResult(spans, State.NORMAL, heading=level, inline_from=0, block_spans=1)
     if prev_state == State.TABLE and "|" in line and not is_blank(line):
         return LineResult(_table_row(line), State.TABLE)
     if is_table_delimiter(line) and "|" in line:
@@ -173,8 +201,70 @@ def lex_line(
     prefix_spans: list[Span] = []
     offset = _quote_prefix(line, prefix_spans)
     offset = _list_prefix(line, offset, prefix_spans)
+    count = len(prefix_spans)
     prefix_spans.extend(_inline(line[offset:], offset))
-    return LineResult(prefix_spans, State.NORMAL)
+    return LineResult(prefix_spans, State.NORMAL, inline_from=offset, block_spans=count)
+
+
+def paragraph_role(line: str, result: LineResult) -> ParagraphRole | None:
+    """The role of a line holding paragraph text, or None for anything else (blank lines, headings
+    written with ``#``, rules, fences, tables, HTML and empty list items or quote lines)."""
+    if result.inline_from < 0 or result.state != State.NORMAL or not line[result.inline_from :].strip():
+        return None
+    item = quoted = False
+    for span in result.spans[: result.block_spans]:
+        bits = int(span.style)
+        if bits & _QUOTE_BIT:
+            quoted = True
+        if bits & _LIST_MARKER_BITS == _LIST_MARKER_BITS:
+            item = True
+    return ParagraphRole(item, quoted)
+
+
+def may_span_lines(texts: Sequence[str]) -> bool:
+    """Whether inline styles could run from one line into another: that takes delimiters (emphasis,
+    code ticks, brackets or tags) on at least two of the lines."""
+    found = 0
+    for text in texts:
+        if _ACROSS.search(text) is not None:
+            found += 1
+            if found > 1:
+                return True
+    return False
+
+
+def continues(above: ParagraphRole, line: ParagraphRole) -> bool:
+    """Whether a line of paragraph text continues the paragraph that the line above belongs to."""
+    if line.item:
+        return False
+    return above.quoted if line.quoted else True
+
+
+def paragraph_inline(texts: Sequence[str]) -> list[list[Span]] | None:
+    """Inline spans of each line of one paragraph (the text after any block markers), parsed as a whole
+    so that emphasis, code spans and links can run across line breaks, as in CommonMark. Offsets are
+    per line. None when the paragraph is too long to parse as a whole."""
+    joined = "\n".join(texts)
+    if len(joined) > MAX_INLINE_CHARS:
+        return None
+    starts: list[int] = []
+    position = 0
+    for text in texts:
+        starts.append(position)
+        position += len(text) + 1
+    lines: list[list[Span]] = [[] for _ in texts]
+    for span in _inline(joined, 0, breaks=False):
+        index = max(0, bisect_right(starts, span.start) - 1)
+        while index < len(texts) and starts[index] < span.end:
+            first = starts[index]
+            a = max(span.start, first)
+            b = min(span.end, first + len(texts[index]))
+            if b > a:
+                lines[index].append(Span(a - first, b - first, span.style))
+            index += 1
+    for index, text in enumerate(texts):
+        lines[index].extend(_breaks(text, 0))
+    return lines
 
 
 def _in_fence(line: str, fence: tuple[str, int, int]) -> LineResult:
@@ -263,17 +353,21 @@ def inline_spans(text: str, base: int = 0) -> list[Span]:
     return _inline(text, base)
 
 
-def _inline(text: str, base: int) -> list[Span]:
+def _breaks(text: str, base: int) -> list[Span]:
+    trailing = len(text) - len(text.rstrip(" "))
+    if trailing >= 2 and text.strip():
+        return [Span(base + len(text) - trailing, base + len(text), Style.HARD_BREAK)]
+    if text.endswith("\\"):
+        return [Span(base + len(text) - 1, base + len(text), Style.HARD_BREAK | Style.MARKER)]
+    return []
+
+
+def _inline(text: str, base: int, breaks: bool = True) -> list[Span]:
     if not text:
         return []
     if len(text) > MAX_INLINE_CHARS:
         return []
-    spans: list[Span] = []
-    trailing = len(text) - len(text.rstrip(" "))
-    if trailing >= 2 and text.strip():
-        spans.append(Span(base + len(text) - trailing, base + len(text), Style.HARD_BREAK))
-    elif text.endswith("\\"):
-        spans.append(Span(base + len(text) - 1, base + len(text), Style.HARD_BREAK | Style.MARKER))
+    spans: list[Span] = _breaks(text, base) if breaks else []
     protected = _code_spans(text, base, spans)
     _raw_spans(text, base, spans, protected)
     _links(text, base, spans, protected)

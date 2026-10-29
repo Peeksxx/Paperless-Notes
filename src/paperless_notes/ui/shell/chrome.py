@@ -225,6 +225,8 @@ class TitleBarHitTest(QObject):
         on_button = button.rect().contains(button.mapFrom(self._bar, local))
         if on_button and button.isVisible() and button.isEnabled():
             return HTMAXBUTTON
+        if isinstance(self._bar.childAt(local), CaptionButton):
+            return None
         if not self._window.isMaximized() and local.y() < RESIZE_BORDER:
             if local.x() < RESIZE_BORDER:
                 return HTTOPLEFT
@@ -289,20 +291,22 @@ class PopupRounder(QObject):
         if app is not None:
             app.installEventFilter(self)
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() == QEvent.Type.Show and isinstance(watched, QMenu):
             round_popup(watched, self.theme)
         return False
 
 
 class AppBar(QWidget):
-    """Sidebar, back and forward, breadcrumbs, the search box (centred on the window), history, help,
-    settings and the caption buttons. Empty space drags the window; a double click maximizes."""
+    """Sidebar, back and forward, breadcrumbs, the search box (centred on the window) with the button that
+    opens a new tab group beside it, history, help, settings and the caption buttons. Empty space drags the
+    window; a double click maximizes."""
 
     sidebar_toggled = Signal()
     back_requested = Signal()
     forward_requested = Signal()
     search_requested = Signal()
+    split_requested = Signal()
     history_requested = Signal()
     help_requested = Signal()
     settings_requested = Signal()
@@ -377,14 +381,19 @@ class AppBar(QWidget):
             caption.setAccessibleName(name)
             caption.setToolTip(tip)
             caption.clicked.connect(signal.emit)
-            caption.setVisible(not native_frame)
             right.addWidget(caption)
+            caption.setVisible(not native_frame)
         self.divider.setVisible(not native_frame)
         if native_frame:
             right.addSpacing(s.sm)
         layout.addWidget(self.right)
         self.search = SearchBox(theme, self)
         self.search.clicked.connect(self.search_requested.emit)
+        self.split_button = icon_button(
+            "Open in new tab group", "Open this note in a new tab group beside it (Ctrl+Shift+\\)"
+        )
+        self.split_button.setParent(self)
+        self.split_button.clicked.connect(self.split_requested.emit)
         self.apply_theme(theme)
 
     def apply_theme(self, theme: Theme) -> None:
@@ -397,6 +406,7 @@ class AppBar(QWidget):
             (self.history_button, "history"),
             (self.help_button, "help"),
             (self.settings_button, "settings"),
+            (self.split_button, "side_by_side"),
         ):
             button.setIcon(glyph_icon(name, p.text_secondary, p.text, p.marker))
         for caption in (self.minimize_button, self.maximize_button, self.close_button):
@@ -425,28 +435,39 @@ class AppBar(QWidget):
         width = self.width()
         m = self._theme.metrics
         right_edge = width - self.right.sizeHint().width() - 12
-        fixed_left = self.layout().contentsMargins().left() + sum(  # type: ignore[union-attr]
+        layout = self.layout()
+        margin = layout.contentsMargins().left() if layout is not None else 0
+        fixed_left = margin + sum(
             b.sizeHint().width() + 2 for b in (self.sidebar_button, self.back_button, self.forward_button)
         )
+        gap = self._theme.spacing.xs
+        button = self.split_button.sizeHint()
+        extra = gap + button.width()
         box = max(160, min(560, round(width * 0.34)))
         x = (width - box) // 2
-        if x + box > right_edge:
-            x = max(fixed_left + 12, right_edge - box)
-            box = max(120, right_edge - x)
+        if x + box + extra > right_edge:
+            x = max(fixed_left + 12, right_edge - box - extra)
+            box = max(120, right_edge - extra - x)
         self.search.setGeometry(x, (self.height() - m.search_box) // 2, box, m.search_box)
-        self.search.setVisible(right_edge - (fixed_left + 12) >= 120)
+        shown = right_edge - (fixed_left + 12) >= 120
+        self.search.setVisible(shown)
+        self.split_button.setGeometry(
+            x + box + gap, (self.height() - button.height()) // 2, button.width(), button.height()
+        )
+        self.split_button.setVisible(shown)
         self.left.setMaximumWidth(max(fixed_left, x - 16 - self.left.x()))
         self.search.raise_()
+        self.split_button.raise_()
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._place_search()
 
-    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt override
+    def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self._place_search()
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and not self._native:
             if self._window.isMaximized():
                 self._grab = event.position()
@@ -458,7 +479,7 @@ class AppBar(QWidget):
                 return
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         grab = self._grab
         if grab is not None and event.buttons() & Qt.MouseButton.LeftButton:
             if (event.position() - grab).manhattanLength() >= QApplication.startDragDistance():
@@ -468,7 +489,7 @@ class AppBar(QWidget):
             return
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._grab = None
         super().mouseReleaseEvent(event)
 
@@ -484,7 +505,7 @@ class AppBar(QWidget):
         if handle is not None:
             handle.startSystemMove()
 
-    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton and not self._native:
             self.maximize_toggled.emit()
             event.accept()
@@ -493,7 +514,8 @@ class AppBar(QWidget):
 
 
 class EdgeResizer(QObject):
-    """Resizes a frameless window from a thin band along its edges using the native resize loop."""
+    """Resizes a frameless window from a thin band along its edges using the native resize loop. The
+    caption buttons win over the band, so the very corner pixel still reaches Close."""
 
     def __init__(self, window: QWidget, border: int = RESIZE_BORDER) -> None:
         super().__init__(window)
@@ -512,7 +534,7 @@ class EdgeResizer(QObject):
             return Qt.Edge(0)
         return edges_at(local, self._window.size(), self._border)
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         kind = event.type()
         if kind not in (QEvent.Type.MouseMove, QEvent.Type.MouseButtonPress) or not isinstance(
             event, QMouseEvent
@@ -520,7 +542,7 @@ class EdgeResizer(QObject):
             return False
         if not isinstance(watched, QWidget) or watched.window() is not self._window:
             return False
-        edges = self._edges(event)
+        edges = Qt.Edge(0) if isinstance(watched, CaptionButton) else self._edges(event)
         shape = cursor_for(edges)
         if kind == QEvent.Type.MouseMove and not event.buttons():
             self._set_cursor(shape)

@@ -8,7 +8,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from PySide6.QtCore import (
     QCoreApplication,
@@ -51,7 +51,7 @@ class Outcome[T]:
     def unwrap(self) -> T:
         if self.error is not None:
             raise self.error
-        return self.value  # type: ignore[return-value]
+        return cast(T, self.value)
 
 
 class IOExecutor(Protocol):
@@ -67,7 +67,7 @@ class IOExecutor(Protocol):
 def run_job[T](job: Callable[[], T]) -> Outcome[T]:
     try:
         return Outcome(value=job())
-    except Exception as exc:  # noqa: BLE001 - handed to the caller as Outcome.error, never dropped
+    except Exception as exc:
         return Outcome(error=exc)
 
 

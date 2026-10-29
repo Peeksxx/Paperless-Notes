@@ -22,6 +22,10 @@ def ui_font(current: Theme) -> QFont:
 
 
 class ThemeManager(QObject):
+    """Owns the current theme. ``about_to_change`` carries the coming theme before anything is restyled, so
+    the window can take a picture of itself to fade from; ``changed`` follows once the theme is applied."""
+
+    about_to_change = Signal(object)
     changed = Signal(object)
 
     def __init__(
@@ -70,7 +74,9 @@ class ThemeManager(QObject):
             self.apply()
 
     def apply(self) -> None:
-        self._theme = theme(self.resolved_mode(), self._accent, self._reduced)
+        upcoming = theme(self.resolved_mode(), self._accent, self._reduced)
+        self.about_to_change.emit(upcoming)
+        self._theme = upcoming
         self._app.setFont(ui_font(self._theme))
         self._app.setPalette(build_palette(self._theme))
         self._app.setStyleSheet(build_stylesheet(self._theme))

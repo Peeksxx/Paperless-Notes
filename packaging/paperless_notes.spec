@@ -1,8 +1,3 @@
-# PyInstaller spec for the Paperless Notes onedir build. Run it through tools\build_release.ps1.
-# Windowed, no UPX, version resource and icon from the repository, and only the Qt parts the app uses:
-# the collected file list is filtered by tools/release.py so network, QML, web, multimedia, SVG and PDF
-# modules, translations and unused plugins never ship.
-
 import sys
 from pathlib import Path
 
@@ -11,8 +6,8 @@ ROOT = Path(SPECPATH).resolve().parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
-from paperless_notes.branding import PRODUCT_NAME  # noqa: E402
-from tools.release import BUILD_EXCLUDES, allowed_file, version_resource  # noqa: E402
+from paperless_notes.branding import PRODUCT_NAME
+from tools.release import BUILD_EXCLUDES, allowed_file, version_resource
 
 analysis = Analysis(
     [str(ROOT / "src" / "paperless_notes" / "__main__.py")],

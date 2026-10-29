@@ -10,7 +10,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QKeySequence, QShortcut, QTextCharFormat, QTextCursor, QTextFormat
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QDialog,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from paperless_notes.core.diffing import DiffModel, Op
+from paperless_notes.ui.shell.dialogs import FadeInDialog
 from paperless_notes.ui.theme.icons import glyph_icon
 from paperless_notes.ui.theme.tokens import Theme
 
@@ -288,7 +288,7 @@ class DiffView(QWidget):
         return self._current
 
 
-class DiffDialog(QDialog):
+class DiffDialog(FadeInDialog):
     def __init__(
         self, title: str, model: DiffModel | None, theme: Theme, note: str = "", parent: QWidget | None = None
     ) -> None:

@@ -1,4 +1,5 @@
-"""Per-machine state that is not a user setting: soft read-only locks and the install id.
+"""Per-machine state that is not a user setting: soft read-only locks, the install id, recent notes and each
+note's own font and colours.
 
 A soft lock never touches the synced file's attributes; it only makes this PC open the note read-only.
 """
@@ -21,6 +22,29 @@ MAX_PATH_CHARS = 32_767
 MAX_RECENT = 20
 NOTE_FONTS = ("sans", "serif", "mono")
 _INSTALL_ID = re.compile(r"[0-9a-f]{32}")
+_COLOR = re.compile(r"#[0-9a-f]{6}")
+
+type NoteColors = tuple[str, str]
+
+
+def note_colors_of(value: object) -> NoteColors | None:
+    """A note's (background, text) pair as lower-case ``#rrggbb``, or None when ``value`` is not one."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    pair = tuple(c.casefold() if isinstance(c, str) else "" for c in value)
+    if not all(_COLOR.fullmatch(c) for c in pair):
+        return None
+    return pair[0], pair[1]
+
+
+def _rename_keys[T](looks: dict[str, T], old: str, new: str) -> bool:
+    """Move the entries of ``old``, and of paths inside it, to ``new``; True when any moved."""
+    prefix = len(pathid.identity(old).rstrip("\\"))
+    keys = [k for k in looks if pathid.is_within(k, old)]
+    for key in keys:
+        value = looks.pop(key)
+        looks.setdefault(pathid.identity(new + key[prefix:]), value)
+    return bool(keys)
 
 
 class LocalStateStore:
@@ -29,6 +53,7 @@ class LocalStateStore:
         self._locks: dict[str, str] = {}
         self._recent: list[str] = []
         self._fonts: dict[str, str] = {}
+        self._colors: dict[str, NoteColors] = {}
         self._install_id = ""
         self._load()
         if not self._install_id:
@@ -57,6 +82,12 @@ class LocalStateStore:
             for path, font in list(fonts.items())[:MAX_LOCKS]:
                 if isinstance(path, str) and 0 < len(path) <= MAX_PATH_CHARS and font in NOTE_FONTS:
                     self._fonts[pathid.identity(path)] = font
+        colors = data.get("note_colors")
+        if isinstance(colors, dict):
+            for path, pair in list(colors.items())[:MAX_LOCKS]:
+                checked = note_colors_of(pair)
+                if isinstance(path, str) and 0 < len(path) <= MAX_PATH_CHARS and checked is not None:
+                    self._colors[pathid.identity(path)] = checked
         locks = data.get("soft_locks")
         if not isinstance(locks, list):
             return
@@ -73,6 +104,7 @@ class LocalStateStore:
                 "soft_locks": sorted(self._locks.values()),
                 "recent_notes": self._recent,
                 "note_fonts": dict(sorted(self._fonts.items())),
+                "note_colors": {path: list(pair) for path, pair in sorted(self._colors.items())},
             },
         )
 
@@ -113,6 +145,29 @@ class LocalStateStore:
         else:
             changed = False
         if changed:
+            self._save()
+
+    def note_colors(self, path: str) -> NoteColors | None:
+        """The note's own (background, text) colours, or None when it follows the default theme."""
+        return self._colors.get(pathid.identity(path))
+
+    def set_note_colors(self, path: str, colors: NoteColors | None) -> None:
+        key = pathid.identity(path)
+        checked = note_colors_of(colors) if colors is not None else None
+        if colors is None:
+            changed = self._colors.pop(key, None) is not None
+        elif checked is not None and self._colors.get(key) != checked:
+            self._colors[key] = checked
+            changed = True
+        else:
+            changed = False
+        if changed:
+            self._save()
+
+    def follow_rename(self, old: str, new: str) -> None:
+        """Keep the own font and colours of a note, or of the notes in a folder, that was renamed or moved."""
+        fonts = _rename_keys(self._fonts, old, new)
+        if _rename_keys(self._colors, old, new) or fonts:
             self._save()
 
     def set_locked(self, path: str, locked: bool) -> None:

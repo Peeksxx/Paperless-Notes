@@ -12,6 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import (
+    QAbstractItemModel,
     QEvent,
     QModelIndex,
     QPersistentModelIndex,
@@ -68,6 +69,7 @@ from paperless_notes.ui.shell.widgets import (
     tone_text_color,
 )
 from paperless_notes.ui.theme.icons import draw_glyph, glyph_icon
+from paperless_notes.ui.theme.style import option_fields
 from paperless_notes.ui.theme.tokens import Theme
 
 logger = logging.getLogger(__name__)
@@ -264,7 +266,7 @@ class LibraryTree(QTreeView):
         self._toggled = (QPersistentModelIndex(index), now)
         self.set_open(index, not self.isExpanded(index))
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mousePressEvent(self, event: QMouseEvent) -> None:
         """The chevron opens and closes through ``set_open`` so it animates the same way."""
         point = event.position().toPoint()
         index = self.indexAt(point)
@@ -276,7 +278,7 @@ class LibraryTree(QTreeView):
                 return
         super().mousePressEvent(event)
 
-    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
+    def keyPressEvent(self, event: QKeyEvent) -> None:
         index = self.currentIndex()
         key = event.key()
         plain = not event.modifiers() & ~Qt.KeyboardModifier.KeypadModifier
@@ -290,11 +292,11 @@ class LibraryTree(QTreeView):
                 return
         super().keyPressEvent(event)
 
-    def scrollContentsBy(self, dx: int, dy: int) -> None:  # noqa: N802 - Qt override
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
         self.end_reveal()
         super().scrollContentsBy(dx, dy)
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         self.end_reveal()
         super().resizeEvent(event)
 
@@ -302,7 +304,7 @@ class LibraryTree(QTreeView):
         self.end_reveal()
         super().reset()
 
-    def paintEvent(self, event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, event: QPaintEvent) -> None:
         """While a folder opens or closes: the rows above as they are, the folder's rows between ``anchor``
         and the moving edge, and the rows below that edge moved with it."""
         reveal = self.reveal
@@ -329,11 +331,11 @@ class LibraryTree(QTreeView):
         left = max(4, self.visualRect(index).left() - self.indentation() - 2)
         return QRectF(left, row.top() + 1, self.viewport().width() - 4 - left, row.height() - 2)
 
-    def drawRow(  # noqa: N802 - Qt override
+    def drawRow(
         self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex
     ) -> None:
         p = self.theme.palette
-        row = QRectF(option.rect)  # type: ignore[attr-defined]
+        row = QRectF(option_fields(option).rect)
         rect = self.highlight_rect(index, row)
         selected = self.selectionModel() is not None and self.selectionModel().isSelected(index)
         here = QPersistentModelIndex(index)
@@ -363,14 +365,14 @@ class LibraryTree(QTreeView):
             )
             painter.restore()
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
         index = self.indexAt(event.position().toPoint())
         hover = QPersistentModelIndex(index) if index.isValid() else QPersistentModelIndex()
         if hover != self.hover:
             self._set_hover(hover)
         super().mouseMoveEvent(event)
 
-    def leaveEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
+    def leaveEvent(self, event: QEvent) -> None:
         self._set_hover(QPersistentModelIndex())
         super().leaveEvent(event)
 
@@ -395,7 +397,7 @@ class LibraryDelegate(QStyledItemDelegate):
         self._tree = tree
         self._sidebar = sidebar
 
-    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:  # noqa: N802
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
         return QSize(120, self._tree.theme.metrics.row)
 
     def _plus_rect(self, option_rect: QRect) -> QRect:
@@ -417,10 +419,11 @@ class LibraryDelegate(QStyledItemDelegate):
     ) -> None:
         theme = self._tree.theme
         p = theme.palette
-        rect = QRect(option.rect)  # type: ignore[attr-defined]
+        fields = option_fields(option)
+        rect = QRect(fields.rect)
         kind = index.data(KIND_ROLE)
         path = str(index.data(PATH_ROLE) or "")
-        state = option.state  # type: ignore[attr-defined]
+        state = fields.state
         selected = bool(state & QStyle.StateFlag.State_Selected)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -476,10 +479,10 @@ class LibraryDelegate(QStyledItemDelegate):
         )
         painter.restore()
 
-    def editorEvent(  # noqa: N802 - Qt override
+    def editorEvent(
         self,
         event: QEvent,
-        model: object,
+        model: QAbstractItemModel,
         option: QStyleOptionViewItem,
         index: QModelIndex | QPersistentModelIndex,
     ) -> bool:
@@ -488,7 +491,7 @@ class LibraryDelegate(QStyledItemDelegate):
             and isinstance(event, QMouseEvent)
             and event.button() == Qt.MouseButton.LeftButton
             and index.data(KIND_ROLE) in (ROOT, FOLDER)
-            and self._plus_rect(QRect(option.rect)).contains(event.position().toPoint())  # type: ignore[attr-defined]
+            and self._plus_rect(QRect(option_fields(option).rect)).contains(event.position().toPoint())
         ):
             self._tree.new_note_in.emit(str(index.data(PATH_ROLE)))
             return True
@@ -496,19 +499,19 @@ class LibraryDelegate(QStyledItemDelegate):
             event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick)
             and isinstance(event, QMouseEvent)
             and index.data(KIND_ROLE) in (ROOT, FOLDER)
-            and self._plus_rect(QRect(option.rect)).contains(event.position().toPoint())  # type: ignore[attr-defined]
+            and self._plus_rect(QRect(option_fields(option).rect)).contains(event.position().toPoint())
         ):
             return True
-        return super().editorEvent(event, model, option, index)  # type: ignore[arg-type]
+        return super().editorEvent(event, model, option, index)
 
-    def helpEvent(  # noqa: N802 - Qt override
+    def helpEvent(
         self,
         event: QHelpEvent,
         view: QAbstractItemView,
         option: QStyleOptionViewItem,
         index: QModelIndex | QPersistentModelIndex,
     ) -> bool:
-        plus = self._plus_rect(QRect(option.rect))  # type: ignore[attr-defined]
+        plus = self._plus_rect(QRect(option_fields(option).rect))
         if index.data(KIND_ROLE) in (ROOT, FOLDER) and plus.contains(event.pos()):
             QToolTip.showText(
                 event.globalPos(), f"New note in {index.data(Qt.ItemDataRole.DisplayRole)}", view
@@ -549,7 +552,7 @@ class SyncSummary(QWidget):
         self._theme = theme
         self._color.jump(QColor(self._text_color()))
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         p = self._theme.palette
         painter = QPainter(self)
         painter.setPen(QPen(QColor(p.border), 1))
@@ -672,7 +675,7 @@ class Sidebar(QWidget):
         layout.addWidget(self.summary)
         self.apply_theme(theme)
 
-    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+    def setVisible(self, visible: bool) -> None:
         if not SlideOut.take(self, visible):
             super().setVisible(visible)
 

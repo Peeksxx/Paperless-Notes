@@ -4,15 +4,20 @@ change applies its end state at once and no timer runs."""
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 from PySide6.QtCore import QAbstractAnimation, QEasingCurve, QEvent, QObject, QSize, Qt, QVariantAnimation
 from PySide6.QtGui import QColor, QResizeEvent
-from PySide6.QtWidgets import QGraphicsOpacityEffect, QWidget
+from PySide6.QtWidgets import QGraphicsEffect, QGraphicsOpacityEffect, QSplitter, QWidget
 
 EASE_OUT = QEasingCurve.Type.OutCubic
 EASE_IN = QEasingCurve.Type.InCubic
 EASE_IN_OUT = QEasingCurve.Type.InOutCubic
+
+
+def clear_effect(widget: QWidget) -> None:
+    """Remove the widget's graphics effect. Qt accepts null here; the type stubs do not say so."""
+    widget.setGraphicsEffect(cast(QGraphicsEffect, None))
 
 
 def animate(
@@ -108,9 +113,21 @@ def fade_in(widget: QWidget, duration: int, rise: int = 0) -> None:
 
     def done() -> None:
         if widget.graphicsEffect() is effect:
-            widget.setGraphicsEffect(None)  # type: ignore[arg-type]
+            clear_effect(widget)
 
     animate(widget, 0.0, 1.0, duration, step, done)
+
+
+def fade_in_window(window: QWidget, duration: int) -> None:
+    """Fade a top-level window in from transparent as it opens; nothing happens when ``duration`` is 0."""
+    if duration <= 0 or not window.isWindow():
+        return
+    window.setWindowOpacity(0.0)
+
+    def done() -> None:
+        window.setWindowOpacity(1.0)
+
+    animate(window, 0.0, 1.0, duration, lambda value: window.setWindowOpacity(float(value)), done)
 
 
 def mix(start: QColor | str, end: QColor | str, amount: float) -> QColor:
@@ -153,7 +170,8 @@ class SlideOut(QWidget):
     panel squeezing. Settled, the box takes the panel's size limits and the panel fills it.
 
     The panel routes its own ``setVisible`` here through ``take``, so code that shows or hides the panel
-    animates it; ``is_open`` reports the intent while an animation runs."""
+    animates it; ``is_open`` reports the intent while an animation runs. A box made before it has a parent
+    leaves showing to that parent, so it never flashes up as a window of its own."""
 
     def __init__(self, content: QWidget, edge: Qt.Edge, duration: Callable[[], int]) -> None:
         super().__init__(content.parentWidget())
@@ -173,7 +191,8 @@ class SlideOut(QWidget):
         self._pass_visible()
         content.installEventFilter(self)
         self._settle()
-        self.setVisible(self.target)
+        if self.parentWidget() is not None or not self.target:
+            self.setVisible(self.target)
 
     @staticmethod
     def take(widget: QWidget, visible: bool) -> bool:
@@ -243,7 +262,23 @@ class SlideOut(QWidget):
             self.setFixedWidth(extent)
         else:
             self.setFixedHeight(extent)
+        self._share(extent)
         self._place()
+
+    def _share(self, extent: int) -> None:
+        """In a splitter, give the room this box frees (or takes) to its neighbour on every step, so the
+        neighbour moves with the slide; a splitter would otherwise only hand it over once the slide ends."""
+        splitter = self.parentWidget()
+        if not isinstance(splitter, QSplitter):
+            return
+        sizes = splitter.sizes()
+        index = splitter.indexOf(self)
+        if index < 0 or len(sizes) < 2:
+            return
+        neighbour = index + 1 if index + 1 < len(sizes) else index - 1
+        sizes[neighbour] = max(0, sizes[neighbour] + sizes[index] - extent)
+        sizes[index] = extent
+        splitter.setSizes(sizes)
 
     def _finish(self) -> None:
         self._animating = False
@@ -284,23 +319,23 @@ class SlideOut(QWidget):
             y = self.height() - self._full if self._edge == Qt.Edge.TopEdge else 0
             self.content.setGeometry(0, y, self.width(), self._full)
 
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def sizeHint(self) -> QSize:
         return self.content.sizeHint()
 
-    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def minimumSizeHint(self) -> QSize:
         return self.content.minimumSizeHint()
 
-    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt override
+    def hasHeightForWidth(self) -> bool:
         return not self._horizontal and not self.running() and self.content.hasHeightForWidth()
 
-    def heightForWidth(self, width: int) -> int:  # noqa: N802 - Qt override
+    def heightForWidth(self, width: int) -> int:
         return self.content.heightForWidth(width)
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._place()
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.content and event.type() == QEvent.Type.LayoutRequest and not self.running():
             self.updateGeometry()
         return False

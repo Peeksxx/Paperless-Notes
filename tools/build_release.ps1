@@ -1,7 +1,3 @@
-# Builds the local release: PyInstaller onedir, legal files and manifest, verification, portable zip,
-# the Inno Setup installer when ISCC.exe is already installed, and SHA-256 sums. Nothing is downloaded,
-# installed, signed, tagged or published. Output goes to build\ and dist\ only (both ignored by git).
-# Usage: powershell -ExecutionPolicy Bypass -File tools\build_release.ps1 [-AllowDirty] [-SkipInstaller]
 param([switch]$AllowDirty, [switch]$SkipInstaller)
 
 $ErrorActionPreference = "Stop"

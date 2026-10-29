@@ -24,6 +24,7 @@ from paperless_notes.branding import PRODUCT_NAME
 from paperless_notes.core import pathid
 from paperless_notes.core.assets import ASSET_FOLDER, AssetService
 from paperless_notes.core.fsops import Expect, FileSystem, atomic_save
+from paperless_notes.core.local_state import NoteColors
 from paperless_notes.core.onedrive import needs_hydration
 from paperless_notes.core.runtime import IOExecutor, Outcome
 from paperless_notes.core.security.links import link_allowed
@@ -31,7 +32,8 @@ from paperless_notes.core.security.resources import ResourcePolicy
 from paperless_notes.mdio.document import SafeTextDocument, decode_image
 from paperless_notes.mdio.render import RenderPolicy, render_html, render_plain
 from paperless_notes.ui.shell.dialogs import Prompter
-from paperless_notes.ui.theme.tokens import LIGHT, NOTE_FONTS, Theme, theme
+from paperless_notes.ui.shell.export_shown import ShownView, TooLongForImageError, shown_pdf, shown_png
+from paperless_notes.ui.theme.tokens import LIGHT, NOTE_FONTS, Theme, note_theme, theme
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,9 @@ class ExportFormat(Enum):
     HTML = ("HTML", ".html", (".html", ".htm"), "Web page (*.html *.htm)")
     PDF = ("PDF", ".pdf", (".pdf",), "PDF document (*.pdf)")
     TEXT = ("plain text", ".txt", (".txt",), "Plain text (*.txt)")
+    SHOWN_PDF = ("PDF as shown", ".pdf", (".pdf",), "PDF document (*.pdf)")
+    SHOWN_PNG = ("image as shown", ".png", (".png",), "PNG image (*.png)")
+    SHOWN_HTML = ("web page as shown", ".html", (".html", ".htm"), "Web page (*.html *.htm)")
 
     def __init__(self, label: str, default: str, extensions: tuple[str, ...], filter_text: str) -> None:
         self.label = label
@@ -79,11 +84,20 @@ def system_clipboard(data: dict[str, str]) -> None:
     clipboard.setMimeData(mime)
 
 
-def export_css(current: Theme, note_font: str = "sans", pdf: bool = False) -> str:
+def export_css(
+    current: Theme,
+    note_font: str = "sans",
+    pdf: bool = False,
+    view: ShownView | None = None,
+    fill: bool = False,
+) -> str:
     """Styling that matches the editor: the note's face at the note size, natural line spacing with one
     blank line's worth of space between blocks, the editor's heading sizes, and its quote, code, link and
     task styles. The PDF writer embeds variable faces at their default instance (heavy for Segoe UI
-    Variable), so PDF output names static faces instead, and leaves the page framing to the PDF margins."""
+    Variable), so PDF output names static faces instead, and leaves the page framing to the PDF margins.
+    With ``view`` the page takes the editor's column width, zoom and page colour all round, and styles the
+    note title the way the editor's header shows it. With ``fill`` (a note with its own colours) the page
+    colour reaches every edge of the page or window."""
     p = current.palette
     t = current.typography
     families = NOTE_FONTS.get(note_font, NOTE_FONTS["sans"])
@@ -94,10 +108,24 @@ def export_css(current: Theme, note_font: str = "sans", pdf: bool = False) -> st
     generic = {"serif": "serif", "mono": "monospace"}.get(note_font, "sans-serif")
     body = ", ".join(f'"{f}"' for f in dict.fromkeys(families)) + f", {generic}"
     mono = ", ".join(f'"{f}"' for f in dict.fromkeys(mono_families)) + ", monospace"
+    display = ", ".join(f'"{f}"' for f in dict.fromkeys(t.display_families)) + ", sans-serif"
     gap = "0.9em"
+    size = t.note_pt
     framing = "" if pdf else f"background: {p.page}; max-width: 46em; margin: 2em auto; padding: 0 1em; "
+    shown = ""
+    if fill:
+        framing = f"background-color: {p.page}; " if pdf else framing
+        shown = "" if pdf else f"html {{ background: {p.page}; }}\n"
+    if view is not None:
+        size = round(t.note_pt * view.zoom / 100, 2)
+        framing = f"background: {p.page}; max-width: {view.text_width}px; margin: 3em auto; padding: 0 1em; "
+        shown = (
+            f"html {{ background: {p.page}; }}\n"
+            f"h1.note-title {{ font-family: {display}; font-size: {t.title_pt}pt; font-weight: 600; "
+            f"margin: 0 0 0.8em 0; }}\n"
+        )
     return (
-        f"body {{ font-family: {body}; font-size: {t.note_pt}pt; color: {p.text}; {framing}}}\n"
+        shown + f"body {{ font-family: {body}; font-size: {size}pt; color: {p.text}; {framing}}}\n"
         f"p {{ margin: 0 0 {gap} 0; }}\n"
         "h1, h2, h3, h4, h5, h6 { font-weight: bold; margin: 1.1em 0 0.45em 0; }\n"
         "h1 { font-size: 1.6em; } h2 { font-size: 1.35em; } h3 { font-size: 1.2em; } "
@@ -177,8 +205,10 @@ class ImagePolicy:
         return name
 
 
-def pdf_bytes(page_html: str, resources: dict[str, bytes], title: str) -> bytes:
-    """Lay the page out with Qt and print it to PDF in memory. Only the named images are available."""
+def pdf_bytes(page_html: str, resources: dict[str, bytes], title: str, fill: bool = False) -> bytes:
+    """Lay the page out with Qt and print it to PDF in memory. Only the named images are available. With
+    ``fill`` the page is drawn in full-page mode, so the page colour reaches the paper's edge; Qt keeps its
+    own 2 cm around the text."""
     document = SafeTextDocument(policy=None)
     for name, data in resources.items():
         image = decode_image(data, 40_000_000)
@@ -192,6 +222,10 @@ def pdf_bytes(page_html: str, resources: dict[str, bytes], title: str) -> bytes:
     writer.setCreator(PRODUCT_NAME)
     writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
     writer.setPageMargins(QMarginsF(20, 20, 20, 20), QPageLayout.Unit.Millimeter)
+    if fill:
+        layout = writer.pageLayout()
+        layout.setMode(QPageLayout.Mode.FullPageMode)
+        writer.setPageLayout(layout)
     document.print_(writer)
     del writer
     return bytes(buffer.data().data())
@@ -279,10 +313,18 @@ class Exporter:
         fmt: ExportFormat,
         done: Callable[[ExportResult], None],
         note_font: str = "sans",
+        view: ShownView | None = None,
+        colors: NoteColors | None = None,
     ) -> None:
-        """Export ``text`` (a snapshot of the note) and report through ``done`` on the UI thread."""
+        """Export ``text`` (a snapshot of the note) and report through ``done`` on the UI thread. The formats
+        "as shown" need ``view``, how the note looks in its editor. ``colors`` are the note's own background
+        and text colours, which the web page and PDF take on."""
         if self.busy:
             done(ExportResult(False, "Another export is still running."))
+            return
+        shown = fmt in (ExportFormat.SHOWN_PDF, ExportFormat.SHOWN_PNG, ExportFormat.SHOWN_HTML)
+        if shown and view is None:
+            done(ExportResult(False, "Open the note in a tab to export it as shown. Nothing was written."))
             return
         path, expected, reason = self.choose_target(note_path, fmt)
         if path is None:
@@ -291,12 +333,29 @@ class Exporter:
         self.busy = True
         title = ntpath.splitext(ntpath.basename(note_path))[0]
         current = self._theme() if fmt is ExportFormat.HTML else theme(LIGHT)
-        css = export_css(current, note_font, pdf=fmt is ExportFormat.PDF)
+        if colors is not None:
+            current = note_theme(current, *colors)
+        fill = colors is not None
+        css = export_css(current, note_font, pdf=fmt is ExportFormat.PDF, fill=fill)
+        if view is not None and fmt is ExportFormat.SHOWN_HTML:
+            css = export_css(view.theme, view.note_font, view=view)
         target = path
 
         def finish(result: ExportResult) -> None:
             self.busy = False
             done(result)
+
+        if view is not None and fmt in (ExportFormat.SHOWN_PDF, ExportFormat.SHOWN_PNG):
+            QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                data = shown_pdf(text, view) if fmt is ExportFormat.SHOWN_PDF else shown_png(text, view)
+            except TooLongForImageError as exc:
+                finish(ExportResult(False, str(exc)))
+                return
+            finally:
+                QGuiApplication.restoreOverrideCursor()
+            self._write(target, data, expected, finish)
+            return
 
         if fmt is ExportFormat.PDF:
             images = ImagePolicy(self._fs, self._assets, note_path, embed=False)
@@ -311,7 +370,7 @@ class Exporter:
                     return
                 QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
                 try:
-                    data = pdf_bytes(outcome.value, images.resources, title)
+                    data = pdf_bytes(outcome.value, images.resources, title, fill)
                 finally:
                     QGuiApplication.restoreOverrideCursor()
                 self._write(target, data, expected, finish)
@@ -319,13 +378,18 @@ class Exporter:
             self._executor.submit(build, laid_out, "export")
             return
 
+        heading = ""
+        if view is not None and fmt is ExportFormat.SHOWN_HTML and view.title:
+            import html as _html
+
+            heading = f'<h1 class="note-title">{_html.escape(view.title)}</h1>\n'
+
         def render() -> bytes:
             if fmt is ExportFormat.TEXT:
                 return render_plain(text).encode("utf-8")
             images = ImagePolicy(self._fs, self._assets, note_path, embed=True)
-            return html_page(title, render_html(text, RenderPolicy(link_allowed, images)), css).encode(
-                "utf-8"
-            )
+            body = heading + render_html(text, RenderPolicy(link_allowed, images))
+            return html_page(title, body, css).encode("utf-8")
 
         def rendered(outcome: Outcome[bytes]) -> None:
             if outcome.error is not None or outcome.value is None:

@@ -32,7 +32,7 @@ class SafeTextDocument(QTextDocument):
     def set_policy(self, policy: ResourcePolicy | None) -> None:
         self._policy = policy
 
-    def loadResource(self, type: int, name: QUrl | str) -> object:  # noqa: N802 - Qt override
+    def loadResource(self, type: int, name: QUrl | str) -> object:
         reference = name.toString() if isinstance(name, QUrl) else str(name)
         self.requests.append(reference)
         if type != QTextDocument.ResourceType.ImageResource.value or self._policy is None:

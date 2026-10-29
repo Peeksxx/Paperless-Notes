@@ -5,33 +5,32 @@ matter. Inserting is one undo step."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Qt, QTimer
+from PySide6.QtCore import QObject, QRect, Qt, QTimer
 from PySide6.QtGui import QKeyEvent, QTextCursor
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QListWidget, QListWidgetItem
+from PySide6.QtWidgets import QHBoxLayout, QListWidget, QListWidgetItem
 
 from paperless_notes.mdio.emoji import completed_at, matches, query_at
 from paperless_notes.mdio.lexer import Style
 from paperless_notes.mdio.source import in_raw_region, index_of, line_result, position_of
 from paperless_notes.ui.editor.note_editor import NoteEditor
+from paperless_notes.ui.shell.popup import Popup, fit_list
 
 NO_EMOJI = Style.CODE | Style.CODE_BLOCK | Style.URL | Style.HTML | Style.META
 MAX_ROWS = 8
 
 
-class EmojiPicker(QFrame):
+class EmojiPicker(Popup):
     def __init__(self, editor: NoteEditor) -> None:
-        super().__init__(editor)
-        self.setObjectName("Toast")
-        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        super().__init__(editor, editor.theme)
         self.setAccessibleName("Emoji")
         self.list = QListWidget(self)
         self.list.setProperty("role", "plain")
         self.list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.list.setAccessibleName("Matching emoji")
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(*self.inner_margins(editor.theme.spacing.xs, editor.theme.spacing.xs))
         layout.addWidget(self.list)
-        self.hide()
 
     def labels(self) -> list[str]:
         return [self.list.item(i).text() for i in range(self.list.count())]
@@ -48,9 +47,13 @@ class EmojiAssist(QObject):
         self._start = -1
         editor.key_hooks.insert(0, self._on_key)
         editor.focus_out_hooks.append(self.close)
+        editor.theme_changed.connect(self._on_theme)
+
+    def _on_theme(self) -> None:
+        self.picker.apply_theme(self._editor.theme)
 
     def _on_key(self, event: QKeyEvent) -> bool:
-        if self.picker.isVisible():
+        if self.picker.is_open:
             key = event.key()
             rows = self.picker.list
             if key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
@@ -109,24 +112,12 @@ class EmojiAssist(QObject):
             rows.addItem(item)
         rows.setCurrentRow(0)
         self._place()
-        self.picker.show()
-        self.picker.raise_()
 
     def _place(self) -> None:
-        rows = self.picker.list
-        count = min(rows.count(), MAX_ROWS)
-        row = max(rows.sizeHintForRow(0), 24)
-        width = max(220, rows.sizeHintForColumn(0) + 32)
-        height = count * row + 12
         editor = self._editor
+        fit_list(self.picker.list, editor.rect(), MAX_ROWS)
         caret = editor.cursorRect()
-        origin = editor.viewport().mapTo(editor, caret.bottomLeft())
-        area = editor.rect()
-        x = max(4, min(origin.x(), area.width() - width - 4))
-        y = origin.y() + 4
-        if y + height > area.height() - 4:
-            y = editor.viewport().mapTo(editor, caret.topLeft()).y() - height - 4
-        self.picker.setGeometry(x, max(4, y), width, height)
+        self.picker.present(QRect(editor.viewport().mapTo(editor, caret.topLeft()), caret.size()))
 
     def _insert_item(self, item: QListWidgetItem) -> None:
         emoji = str(item.data(Qt.ItemDataRole.UserRole))
@@ -149,4 +140,4 @@ class EmojiAssist(QObject):
 
     def close(self) -> None:
         self._start = -1
-        self.picker.hide()
+        self.picker.dismiss()

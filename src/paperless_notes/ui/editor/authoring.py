@@ -19,7 +19,7 @@ from paperless_notes.core.assets import AssetResult, AssetService
 from paperless_notes.core.security.paste import convert_html, has_structure, normalize_pasted_text
 from paperless_notes.mdio import edits, tables
 from paperless_notes.mdio.edits import EditResult, SlashQuery, done, edit_block, refuse
-from paperless_notes.mdio.source import in_raw_region
+from paperless_notes.mdio.source import in_raw_region, index_of, position_of
 from paperless_notes.ui.editor.note_editor import NoteEditor
 
 logger = logging.getLogger(__name__)
@@ -596,12 +596,28 @@ class Authoring(QObject):
         if source.hasHtml() and has_structure(source.html()):
             converted = convert_html(source.html())
             if converted is not None:
-                return self.insert_plain(
-                    cursor, converted.rstrip("\n") if "\n" not in converted.strip() else converted
-                )
+                return self._insert_converted(cursor, source.html(), converted)
         if text:
             return self.insert_plain(cursor, text)
         return None
+
+    def _insert_converted(self, cursor: QTextCursor, html: str, converted: str) -> EditResult | None:
+        """Pasted formatting inside bold, italic or strikethrough: one line of text takes on the styles
+        around it; several lines close the styles before the paste and reopen them after it, so no marker
+        is left unmatched."""
+        if "\n" not in converted.strip():
+            converted = converted.rstrip("\n")
+        if cursor.hasSelection() or in_raw_region(cursor.block()):
+            return self.insert_plain(cursor, converted)
+        block = cursor.block()
+        index = index_of(block, cursor.position())
+        if "\n" not in converted:
+            names = tuple(s.name for s in edits.open_styles(block, index))
+            inherited = convert_html(html, names) if names else None
+            return self.insert_plain(cursor, inherited.rstrip("\n") if inherited else converted)
+        point, closers, openers = edits.split_point(block, index)
+        cursor.setPosition(position_of(block, point))
+        return self.insert_plain(cursor, closers + converted + openers)
 
     def _insert_images(self, cursor: QTextCursor, paths: list[str]) -> EditResult:
         service = self.host.assets
@@ -728,7 +744,9 @@ class Authoring(QObject):
         if not self.writable():
             return False
         if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and modifiers == Qt.KeyboardModifier.NoModifier:
-            return self._run_key(edits.continue_list)
+            return self._run_key(edits.break_line)
+        if key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete) and modifiers == Qt.KeyboardModifier.NoModifier:
+            return self._run_key(lambda c: edits.join_lines(c, forward=key == Qt.Key.Key_Delete))
         if key == Qt.Key.Key_Tab and modifiers == Qt.KeyboardModifier.NoModifier:
             return self._tab(backward=False)
         if key == Qt.Key.Key_Backtab or (

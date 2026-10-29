@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ntpath
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QEnterEvent, QFontMetrics, QPainter, QPaintEvent, QPen, QResizeEvent
 from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QLabel, QMenu, QSizePolicy, QToolButton, QWidget
 
@@ -141,7 +141,7 @@ class Breadcrumbs(QWidget):
         fits = metrics.horizontalAdvance(text) <= room and text.strip("\N{HORIZONTAL ELLIPSIS}")
         self.current.setText(text if fits else "")
 
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+    def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._fit()
 
@@ -164,18 +164,18 @@ class SearchBox(QAbstractButton):
         self._theme = theme
         self.update()
 
-    def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
+    def sizeHint(self) -> QSize:
         return QSize(420, self._theme.metrics.search_box)
 
-    def enterEvent(self, event: QEnterEvent) -> None:  # noqa: N802 - Qt override
+    def enterEvent(self, event: QEnterEvent) -> None:
         self._hover = True
         self.update()
         super().enterEvent(event)
 
-    def leaveEvent(self, event: object) -> None:  # noqa: N802 - Qt override
+    def leaveEvent(self, event: QEvent) -> None:
         self._hover = False
         self.update()
-        super().leaveEvent(event)  # type: ignore[arg-type]
+        super().leaveEvent(event)
 
     def label(self) -> str:
         """The visible prompt for the current width."""
@@ -186,7 +186,7 @@ class SearchBox(QAbstractButton):
                 return text
         return "Search"
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         t = self._theme
         p = t.palette
         painter = QPainter(self)

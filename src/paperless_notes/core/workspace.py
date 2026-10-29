@@ -1,7 +1,9 @@
-"""Open tabs and window placement for this PC.
+"""Open tabs, tab groups and window placement for this PC.
 
 Restore is lazy: the UI creates a tab per entry and opens the note only when the tab is first shown.
-Tabs whose file is missing (for example not yet synced) are kept until the user closes them.
+Tabs whose file is missing (for example not yet synced) are kept until the user closes them. The first
+tab group is stored as ``tabs`` and ``active``, so an older version still finds its tabs; the other groups
+follow in ``groups``. A second pane saved by an older version comes back as a second group.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ SCHEMA_VERSION = 1
 MAX_TABS = 500
 MAX_PATH_CHARS = 32_767
 MAX_BLOB_CHARS = 64 * 1024
+MAX_GROUPS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +38,14 @@ class TabState:
 
 
 @dataclass(frozen=True, slots=True)
+class GroupState:
+    """The tabs of one tab group after the first, and which of them was showing."""
+
+    tabs: tuple[TabState, ...] = ()
+    active: int = -1
+
+
+@dataclass(frozen=True, slots=True)
 class WindowState:
     geometry: str = ""
     state: str = ""
@@ -43,13 +54,14 @@ class WindowState:
 
 @dataclass(frozen=True, slots=True)
 class Workspace:
-    """Tabs, the active tab, window placement, and whether the second pane was open with which note."""
+    """The first group's tabs and active tab, window placement, the other tab groups, and which group was
+    focused last (0 is the first)."""
 
     tabs: tuple[TabState, ...] = ()
     active: int = -1
     window: WindowState = field(default_factory=WindowState)
-    split_open: bool = False
-    split_path: str = ""
+    groups: tuple[GroupState, ...] = ()
+    active_group: int = 0
 
     def partition(self, exists: Callable[[str], bool]) -> tuple[list[TabState], list[TabState]]:
         available = [t for t in self.tabs if exists(t.path)]
@@ -73,16 +85,19 @@ def _blob(value: Any) -> str:
     return value
 
 
-def parse_workspace(data: dict[str, Any] | None) -> Workspace:
-    if data is None or data.get("schema_version") != SCHEMA_VERSION:
-        return Workspace()
+def _path(value: Any) -> str | None:
+    if not isinstance(value, str) or not 0 < len(value) <= MAX_PATH_CHARS or "\x00" in value:
+        return None
+    return value
+
+
+def _tabs(raw_tabs: Any) -> tuple[TabState, ...]:
     tabs: list[TabState] = []
-    raw_tabs = data.get("tabs")
     for raw in raw_tabs[:MAX_TABS] if isinstance(raw_tabs, list) else []:
         if not isinstance(raw, dict):
             continue
-        path = raw.get("path")
-        if not isinstance(path, str) or not 0 < len(path) <= MAX_PATH_CHARS or "\x00" in path:
+        path = _path(raw.get("path"))
+        if path is None:
             continue
         tabs.append(
             TabState(
@@ -92,6 +107,31 @@ def parse_workspace(data: dict[str, Any] | None) -> Workspace:
                 raw.get("pinned") is True,
             )
         )
+    return tuple(tabs)
+
+
+def _groups(data: dict[str, Any]) -> tuple[GroupState, ...]:
+    raw_groups = data.get("groups")
+    groups: list[GroupState] = []
+    for raw in raw_groups[: MAX_GROUPS - 1] if isinstance(raw_groups, list) else []:
+        tabs = _tabs(raw.get("tabs")) if isinstance(raw, dict) else ()
+        if tabs:
+            active = _int(raw.get("active"), -1, len(tabs) - 1)
+            groups.append(GroupState(tabs, 0 if active is None or active < 0 else active))
+    if "groups" in data:
+        return tuple(groups)
+    raw_split = data.get("split")
+    if isinstance(raw_split, dict) and raw_split.get("open") is True:
+        path = _path(raw_split.get("path"))
+        if path is not None:
+            return (GroupState((TabState(path),), 0),)
+    return ()
+
+
+def parse_workspace(data: dict[str, Any] | None) -> Workspace:
+    if data is None or data.get("schema_version") != SCHEMA_VERSION:
+        return Workspace()
+    tabs = _tabs(data.get("tabs"))
     active = _int(data.get("active"), -1, len(tabs) - 1)
     raw_window = data.get("window")
     window = WindowState()
@@ -101,25 +141,22 @@ def parse_workspace(data: dict[str, Any] | None) -> Workspace:
             _blob(raw_window.get("state")),
             raw_window.get("maximized") is True,
         )
-    raw_split = data.get("split")
-    split_open = False
-    split_path = ""
-    if isinstance(raw_split, dict) and raw_split.get("open") is True:
-        split_open = True
-        path = raw_split.get("path")
-        if isinstance(path, str) and 0 < len(path) <= MAX_PATH_CHARS and "\x00" not in path:
-            split_path = path
-    return Workspace(tuple(tabs), -1 if active is None else active, window, split_open, split_path)
+    groups = _groups(data)
+    active_group = _int(data.get("active_group"), 0, len(groups)) or 0
+    return Workspace(tabs, -1 if active is None else active, window, groups, active_group)
+
+
+def _dump_tabs(tabs: tuple[TabState, ...]) -> list[dict[str, Any]]:
+    return [{"path": t.path, "cursor": t.cursor, "scroll": t.scroll, "pinned": t.pinned} for t in tabs]
 
 
 def dump_workspace(ws: Workspace) -> dict[str, Any]:
     return {
-        "split": {"open": ws.split_open, "path": ws.split_path},
         "schema_version": SCHEMA_VERSION,
-        "tabs": [
-            {"path": t.path, "cursor": t.cursor, "scroll": t.scroll, "pinned": t.pinned} for t in ws.tabs
-        ],
+        "tabs": _dump_tabs(ws.tabs),
         "active": ws.active,
+        "groups": [{"tabs": _dump_tabs(g.tabs), "active": g.active} for g in ws.groups],
+        "active_group": ws.active_group,
         "window": {
             "geometry": ws.window.geometry,
             "state": ws.window.state,

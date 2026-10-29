@@ -1,4 +1,5 @@
-"""Small dialogs: a name field that explains problems before anything is written, and confirmations.
+"""Small dialogs: a name field that explains problems before anything is written, confirmations, and a
+note's own colours.
 
 UI code asks through a ``Prompter`` so tests can answer without a modal event loop.
 """
@@ -6,9 +7,13 @@ UI code asks through a ``Prompter`` so tests can answer without a modal event lo
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Protocol
 
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor, QShowEvent
 from PySide6.QtWidgets import (
+    QColorDialog,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -21,10 +26,33 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from paperless_notes.core.local_state import NoteColors
 from paperless_notes.core.security.filenames import NameCheck
+from paperless_notes.ui.shell.motion import fade_in_window
+from paperless_notes.ui.theme.tokens import Theme, contrast
+
+READABLE_CONTRAST = 4.5
+PREVIEW_TEXT = "The quick brown fox jumps over the lazy dog."
 
 
-class NameDialog(QDialog):
+def window_motion_ms(widget: QWidget) -> int:
+    """How long a dialog of ``widget``'s window takes to fade in: the main window's normal duration, or 0 with
+    Reduce motion or when the dialog has no themed window behind it."""
+    parent = widget.parentWidget()
+    current = getattr(parent.window(), "theme", None) if parent is not None else None
+    return current.ms(current.motion.normal_ms) if isinstance(current, Theme) else 0
+
+
+class FadeInDialog(QDialog):
+    """A dialog that fades in each time it opens."""
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        if not event.spontaneous():
+            fade_in_window(self, window_motion_ms(self))
+
+
+class NameDialog(FadeInDialog):
     """Asks for a name and validates it live; OK stays disabled while the name has a problem."""
 
     def __init__(
@@ -73,7 +101,7 @@ class NameDialog(QDialog):
         return self.field.text()
 
 
-class ConfirmDialog(QDialog):
+class ConfirmDialog(FadeInDialog):
     """A decision in context: a plain explanation and one clearly worded action button."""
 
     def __init__(
@@ -98,6 +126,103 @@ class ConfirmDialog(QDialog):
         layout.addWidget(buttons)
 
 
+@dataclass(frozen=True, slots=True)
+class ColorChoice:
+    """What the note theme dialog decided: the note's own (background, text) colours, or None to follow the
+    default theme again."""
+
+    colors: NoteColors | None
+
+
+class ColorSwatch(QPushButton):
+    """A button showing one colour and its code; clicking it opens the colour picker."""
+
+    changed = Signal(str)
+
+    def __init__(self, label: str, color: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._label = label
+        self._color = ""
+        self.setToolTip(f"Choose the {label.lower()} colour")
+        self.clicked.connect(self._pick)
+        self.set_color(color)
+
+    def color(self) -> str:
+        return self._color
+
+    def set_color(self, color: str) -> None:
+        self._color = QColor(color).name()
+        ink = "#000000" if contrast("#000000", self._color) >= contrast("#ffffff", self._color) else "#ffffff"
+        self.setText(self._color)
+        self.setAccessibleName(f"{self._label} colour, {self._color}")
+        self.setStyleSheet(f"QPushButton {{ background: {self._color}; color: {ink}; }}")
+        self.changed.emit(self._color)
+
+    def _pick(self) -> None:
+        chosen = QColorDialog.getColor(QColor(self._color), self, f"{self._label} colour")
+        if chosen.isValid():
+            self.set_color(chosen.name())
+
+
+class NoteThemeDialog(FadeInDialog):
+    """One note's background and text colours, chosen with the colour picker, with a preview and a warning
+    when the text would be hard to read. "Use default theme" goes back to the theme set in Settings."""
+
+    def __init__(self, start: NoteColors, custom: bool, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Note theme")
+        self.setMinimumWidth(420)
+        self._reset = False
+        layout = QVBoxLayout(self)
+        intro = QLabel("Colours for this note on this PC. Other notes keep the default theme from Settings.")
+        intro.setWordWrap(True)
+        form = QFormLayout()
+        self.background = ColorSwatch("Background", start[0])
+        self.text = ColorSwatch("Text", start[1])
+        form.addRow("Background", self.background)
+        form.addRow("Text", self.text)
+        self.preview = QLabel(PREVIEW_TEXT)
+        self.preview.setWordWrap(True)
+        self.preview.setMargin(12)
+        self.preview.setAccessibleName("Preview")
+        self.warning = QLabel("")
+        self.warning.setWordWrap(True)
+        self.warning.setProperty("role", "secondary")
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        self.default_button = QPushButton("Use default theme")
+        self.default_button.setEnabled(custom)
+        self.default_button.clicked.connect(self._use_default)
+        buttons.addButton(self.default_button, QDialogButtonBox.ButtonRole.ResetRole)
+        self.save_button = QPushButton("Save")
+        self.save_button.setProperty("kind", "primary")
+        self.save_button.setDefault(True)
+        buttons.addButton(self.save_button, QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(intro)
+        layout.addLayout(form)
+        layout.addWidget(self.preview)
+        layout.addWidget(self.warning)
+        layout.addWidget(buttons)
+        self.background.changed.connect(self._update)
+        self.text.changed.connect(self._update)
+        self._update()
+
+    def _use_default(self) -> None:
+        self._reset = True
+        self.accept()
+
+    def _update(self, _color: str = "") -> None:
+        background, text = self.background.color(), self.text.color()
+        self.preview.setStyleSheet(f"QLabel {{ background: {background}; color: {text}; }}")
+        ratio = contrast(text, background)
+        advice = " The text may be hard to read; 4.5 to 1 or more is easier."
+        self.warning.setText(f"Contrast {ratio:.1f} to 1.{advice if ratio < READABLE_CONTRAST else ''}")
+
+    def choice(self) -> ColorChoice:
+        return ColorChoice(None if self._reset else (self.background.color(), self.text.color()))
+
+
 class Prompter(Protocol):
     def confirm(self, title: str, text: str, action: str, danger: bool = False) -> bool: ...
 
@@ -119,6 +244,8 @@ class Prompter(Protocol):
     def ask_table_size(self) -> tuple[int, int] | None: ...
 
     def choose_save_file(self, title: str, start: str, filter_text: str) -> str | None: ...
+
+    def ask_note_colors(self, start: NoteColors, custom: bool) -> ColorChoice | None: ...
 
 
 class DialogPrompter:
@@ -170,8 +297,13 @@ class DialogPrompter:
         )
         return path or None
 
+    def ask_note_colors(self, start: NoteColors, custom: bool) -> ColorChoice | None:
+        """The note theme dialog; None when cancelled."""
+        dialog = NoteThemeDialog(start, custom, self._parent)
+        return dialog.choice() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
-class TableSizeDialog(QDialog):
+
+class TableSizeDialog(FadeInDialog):
     """Columns and body rows for a new table, bounded, with a safe default of 3 by 2."""
 
     def __init__(self, parent: QWidget | None = None) -> None:

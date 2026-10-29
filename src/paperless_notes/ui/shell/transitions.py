@@ -44,7 +44,7 @@ class Cover(QWidget):
         self.hide()
         self.deleteLater()
 
-    def paintEvent(self, _event: QPaintEvent) -> None:  # noqa: N802 - Qt override
+    def paintEvent(self, _event: QPaintEvent) -> None:
         painter = QPainter(self)
         self._paint(painter, self.elapsed)
         painter.end()

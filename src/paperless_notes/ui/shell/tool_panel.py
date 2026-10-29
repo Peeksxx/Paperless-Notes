@@ -87,7 +87,7 @@ class ToolPanel(QFrame):
         self.apply_theme(theme)
         self.hide()
 
-    def setVisible(self, visible: bool) -> None:  # noqa: N802 - Qt override
+    def setVisible(self, visible: bool) -> None:
         if not SlideOut.take(self, visible):
             super().setVisible(visible)
 
